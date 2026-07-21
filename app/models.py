@@ -1,6 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
+from uuid import UUID, uuid4
 
 from sqlalchemy import (
     JSON,
@@ -15,6 +16,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    Uuid,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -235,6 +237,98 @@ class PortfolioPosition(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+class AnonymousPortfolio(Base):
+    """One persisted paper-trading wallet identified by a hashed browser cookie."""
+
+    __tablename__ = "anonymous_portfolios"
+    __table_args__ = (
+        CheckConstraint("cash_brl >= 0", name="cash_non_negative"),
+        CheckConstraint("realized_pnl_brl IS NOT NULL", name="realized_pnl_present"),
+        Index("ix_anonymous_portfolios_last_seen", "last_seen_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    identity_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    cash_brl: Mapped[Decimal] = mapped_column(VALUE_TYPE, nullable=False, default=Decimal("10000"))
+    realized_pnl_brl: Mapped[Decimal] = mapped_column(
+        VALUE_TYPE, nullable=False, default=Decimal("0")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    positions: Mapped[list["SimulatedPosition"]] = relationship(
+        back_populates="portfolio", cascade="all, delete-orphan"
+    )
+    trades: Mapped[list["SimulatedTrade"]] = relationship(
+        back_populates="portfolio", cascade="all, delete-orphan"
+    )
+
+
+class SimulatedPosition(Base):
+    """Current spot position for one anonymous paper-trading wallet."""
+
+    __tablename__ = "simulated_positions"
+    __table_args__ = (
+        CheckConstraint("quantity > 0", name="quantity_positive"),
+        CheckConstraint("average_price_brl > 0", name="average_price_positive"),
+    )
+
+    portfolio_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("anonymous_portfolios.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    asset_id: Mapped[int] = mapped_column(
+        ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True
+    )
+    quantity: Mapped[Decimal] = mapped_column(VALUE_TYPE, nullable=False)
+    average_price_brl: Mapped[Decimal] = mapped_column(PRICE_TYPE, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    portfolio: Mapped[AnonymousPortfolio] = relationship(back_populates="positions")
+    asset: Mapped[Asset] = relationship()
+
+
+class SimulatedTrade(Base):
+    """Immutable audit record for a simulated spot trade."""
+
+    __tablename__ = "simulated_trades"
+    __table_args__ = (
+        CheckConstraint("side IN ('buy', 'sell')", name="valid_side"),
+        CheckConstraint("quantity > 0", name="quantity_positive"),
+        CheckConstraint("price_brl > 0", name="price_positive"),
+        CheckConstraint("notional_brl > 0", name="notional_positive"),
+        Index("ix_simulated_trades_portfolio_executed", "portfolio_id", "executed_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    portfolio_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("anonymous_portfolios.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    asset_id: Mapped[int] = mapped_column(
+        ForeignKey("assets.id", ondelete="RESTRICT"), nullable=False
+    )
+    side: Mapped[str] = mapped_column(String(4), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(VALUE_TYPE, nullable=False)
+    price_brl: Mapped[Decimal] = mapped_column(PRICE_TYPE, nullable=False)
+    notional_brl: Mapped[Decimal] = mapped_column(VALUE_TYPE, nullable=False)
+    executed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    source: Mapped[str] = mapped_column(String(24), nullable=False, default="web")
+
+    portfolio: Mapped[AnonymousPortfolio] = relationship(back_populates="trades")
+    asset: Mapped[Asset] = relationship()
 
 
 class IngestionRun(Base):

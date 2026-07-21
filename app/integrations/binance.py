@@ -136,6 +136,49 @@ class BinanceClient:
 
         return [candles[key] for key in sorted(candles)]
 
+    def fetch_price(self, symbol: str) -> Decimal:
+        """Fetch a fresh public spot quote for a simulated trade."""
+        normalized_symbol = symbol.strip().upper()
+        for attempt in range(self.max_attempts):
+            try:
+                response = self.http.get(
+                    "/api/v3/ticker/price",
+                    params={"symbol": normalized_symbol},
+                )
+            except httpx.TimeoutException as exc:
+                if attempt == self.max_attempts - 1:
+                    raise BinanceClientError(
+                        "Binance price request timed out after retries"
+                    ) from exc
+                self.sleep(_backoff_seconds(attempt))
+                continue
+            except httpx.HTTPError as exc:
+                raise BinanceClientError("Binance price request failed") from exc
+
+            if response.status_code == 429:
+                if attempt == self.max_attempts - 1:
+                    raise BinanceRateLimitError("Binance price rate limit persisted after retries")
+                self.sleep(_retry_after(response, attempt))
+                continue
+            if response.status_code >= 500:
+                if attempt == self.max_attempts - 1:
+                    raise BinanceClientError(
+                        f"Binance returned HTTP {response.status_code} after retries"
+                    )
+                self.sleep(_backoff_seconds(attempt))
+                continue
+            try:
+                response.raise_for_status()
+                payload = response.json()
+                price = Decimal(str(payload["price"]))
+            except (httpx.HTTPError, KeyError, TypeError, ValueError, InvalidOperation) as exc:
+                raise BinanceClientError("Binance returned an invalid price response") from exc
+            if price <= 0:
+                raise BinanceClientError("Binance returned a non-positive price")
+            return price
+
+        raise BinanceClientError("Binance price request exhausted all attempts")
+
     def close(self) -> None:
         self.http.close()
 

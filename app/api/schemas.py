@@ -1,4 +1,5 @@
 from decimal import Decimal
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -46,3 +47,36 @@ class AlertTransitionRequest(BaseModel):
 
 class RiskProfileUpdate(BaseModel):
     profile: Literal["conservative", "moderate", "aggressive", "custom"]
+
+
+class TradeSide(StrEnum):
+    BUY = "buy"
+    SELL = "sell"
+
+
+class TradeRequest(BaseModel):
+    side: TradeSide
+    quantity: Decimal | None = Field(
+        default=None,
+        gt=0,
+        max_digits=36,
+        decimal_places=12,
+        allow_inf_nan=False,
+    )
+    notional_brl: Decimal | None = Field(
+        default=None,
+        gt=0,
+        max_digits=36,
+        decimal_places=12,
+        allow_inf_nan=False,
+    )
+
+    @model_validator(mode="after")
+    def validate_order_shape(self) -> "TradeRequest":
+        if self.side is TradeSide.BUY and (self.quantity is None) == (self.notional_brl is None):
+            raise ValueError("a buy requires exactly one of quantity or notional_brl")
+        if self.side is TradeSide.SELL and self.quantity is None:
+            raise ValueError("a sell requires quantity")
+        if self.side is TradeSide.SELL and self.notional_brl is not None:
+            raise ValueError("a sell must use quantity")
+        return self

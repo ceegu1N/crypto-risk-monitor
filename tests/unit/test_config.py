@@ -11,7 +11,15 @@ def test_default_symbols(monkeypatch):
 
     settings = Settings(_env_file=None)
 
-    assert settings.symbols == ("BTCBRL", "ETHBRL", "SOLBRL", "USDTBRL")
+    assert settings.symbols == (
+        "BTCBRL",
+        "ETHBRL",
+        "SOLBRL",
+        "USDTBRL",
+        "ADABRL",
+        "PEPEBRL",
+        "NEARBRL",
+    )
 
 
 def test_symbols_can_be_configured_from_a_comma_separated_value(monkeypatch):

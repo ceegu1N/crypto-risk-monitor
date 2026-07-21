@@ -71,11 +71,11 @@ function bindControls() {
     state.alertFilter = event.target.value;
     renderAlerts();
   });
-  document.getElementById("add-position-button").addEventListener("click", () => {
-    if (requireLogin()) openPositionDialog();
-  });
+  document.getElementById("add-position-button").addEventListener("click", () => openTradeDialog());
+  document.getElementById("reset-simulator-button").addEventListener("click", resetSimulator);
   document.getElementById("login-form").addEventListener("submit", handleLogin);
-  document.getElementById("position-form").addEventListener("submit", handlePositionSave);
+  document.getElementById("position-form").addEventListener("submit", handleTradeSubmit);
+  document.getElementById("trade-side").addEventListener("change", syncTradeFields);
   document.getElementById("portfolio-table").addEventListener("click", handlePortfolioAction);
   document.getElementById("alerts-table").addEventListener("click", handleAlertAction);
   document.getElementById("rules-list").addEventListener("click", handleRuleAction);
@@ -231,7 +231,7 @@ async function loadMarketChart() {
 async function loadAssetCandles() {
   if (!state.market.length) return;
   renderAssetSummary();
-  const data = await safeApi(`/api/assets/${encodeURIComponent(state.selectedSymbol)}/candles?period=${state.selectedPeriod}&limit=672`);
+  const data = await safeApi(`/api/assets/${encodeURIComponent(state.selectedSymbol)}/candles?period=${state.selectedPeriod}&limit=500`);
   renderAssetChart(data || []);
   document.getElementById("asset-chart-title").textContent = `${displaySymbol(state.selectedSymbol)} · ${state.selectedPeriod}`;
   refreshIcons();
@@ -270,31 +270,33 @@ function renderAssetChart(rows) {
 function renderPortfolio() {
   const data = state.portfolio || { positions: [] };
   document.getElementById("portfolio-kpis").innerHTML = [
-    metricCard("landmark", "Valor atual", formatBRL(data.total_value_brl), `${data.positions.length || 0} posições`),
-    metricCard("chart-no-axes-column-increasing", "Resultado", formatBRL(data.pnl_brl), formatPct(data.pnl_pct), changeClass(data.pnl_brl)),
-    metricCard("calendar-clock", "Variação em 24h", formatPct(data.return_24h_pct), "Carteira estática atual", changeClass(data.return_24h_pct)),
-    metricCard("pie-chart", "Maior posição", formatPct(data.max_weight_pct), "Concentração", data.max_weight_pct >= ruleThreshold("portfolio_concentration", 60) ? "is-warning" : ""),
-    metricCard("flame", "Ativos voláteis", formatPct(data.volatile_asset_share_pct), "Parcela sem USDT", data.volatile_asset_share_pct >= ruleThreshold("volatile_asset_share", 90) ? "is-warning" : ""),
+    metricCard("landmark", "Valor da carteira", formatBRL(data.total_value_brl), `${data.positions.length || 0} posições`),
+    metricCard("banknote", "Caixa disponível", formatBRL(data.cash_brl), "BRL virtual"),
+    metricCard("chart-no-axes-column-increasing", "Resultado total", formatBRL(data.pnl_brl), formatPct(data.pnl_pct), changeClass(data.pnl_brl)),
+    metricCard("history", "P/L realizado", formatBRL(data.realized_pnl_brl), "Operações encerradas", changeClass(data.realized_pnl_brl)),
+    metricCard("database", "Cotação das posições", data.market_data_ready ? "Atualizada" : "Aguardando", "Último snapshot", data.market_data_ready ? "is-positive" : "is-warning"),
   ].join("");
-  const portfolioRisk = data.risk_reasons?.length
-    ? ` Condições ativas: ${data.risk_reasons.map((reason) => reason.label).join("; ")}.`
-    : " Nenhuma regra de portfólio está ativa.";
-  document.getElementById("portfolio-note").textContent = `${data.risk_contribution_note || ""}${portfolioRisk}`;
+  document.getElementById("portfolio-note").textContent = `${data.disclaimer || ""} A carteira fica associada a este navegador por até 90 dias; limpar os cookies cria uma nova carteira.`;
   document.getElementById("portfolio-table").innerHTML = data.positions.length
     ? data.positions.map(positionRow).join("")
-    : "";
+    : '<tr><td colspan="5">Nenhuma posição. Use Operar para simular uma compra.</td></tr>';
+  document.getElementById("trade-table").innerHTML = data.recent_trades?.length
+    ? data.recent_trades.map(tradeRow).join("")
+    : '<tr><td colspan="5">Nenhuma operação registrada.</td></tr>';
   renderPortfolioChart(data.positions);
+  refreshIcons();
 }
 
 function renderPortfolioChart(positions) {
   destroyChart("portfolio");
-  toggleChart("portfolio-chart", "portfolio-empty", positions.length > 0);
-  if (!positions.length || typeof Chart === "undefined") return;
+  const valued = positions.filter((item) => item.current_value_brl !== null);
+  toggleChart("portfolio-chart", "portfolio-empty", valued.length > 0);
+  if (!valued.length || typeof Chart === "undefined") return;
   state.charts.portfolio = new Chart(document.getElementById("portfolio-chart"), {
     type: "doughnut",
     data: {
-      labels: positions.map((item) => displaySymbol(item.symbol)),
-      datasets: [{ data: positions.map((item) => item.current_value_brl), backgroundColor: ["#d98926", "#536fa6", "#6d4da0", "#278767"], borderColor: "#ffffff", borderWidth: 3 }],
+      labels: valued.map((item) => displaySymbol(item.symbol)),
+      datasets: [{ data: valued.map((item) => item.current_value_brl), backgroundColor: ["#d98926", "#536fa6", "#6d4da0", "#278767", "#2d8c9a", "#a45187", "#b66b0f"], borderColor: "#ffffff", borderWidth: 3 }],
     },
     options: { responsive: true, maintainAspectRatio: false, cutout: "66%", plugins: { legend: { position: "bottom", labels: { boxWidth: 10, usePointStyle: true, padding: 16 } } } },
   });
@@ -394,36 +396,55 @@ function recoverOperatorSession(error) {
   return true;
 }
 
-function openPositionDialog(position = null) {
-  document.getElementById("position-symbol").value = position?.symbol || state.selectedSymbol;
-  document.getElementById("position-quantity").value = position?.quantity || "";
-  document.getElementById("position-cost").value = position?.cost_basis_brl || "";
+function openTradeDialog() {
+  document.getElementById("trade-side").value = "buy";
+  document.getElementById("position-symbol").value = state.selectedSymbol;
+  document.getElementById("trade-notional").value = "";
+  document.getElementById("trade-quantity").value = "";
   document.getElementById("position-error").classList.add("is-hidden");
+  syncTradeFields();
   openDialog("position-dialog");
 }
 
-async function handlePositionSave(event) {
+function syncTradeFields() {
+  const isBuy = document.getElementById("trade-side").value === "buy";
+  document.getElementById("trade-notional-field").classList.toggle("is-hidden", !isBuy);
+  document.getElementById("trade-quantity-field").classList.toggle("is-hidden", isBuy);
+  document.getElementById("trade-notional").required = isBuy;
+  document.getElementById("trade-quantity").required = !isBuy;
+}
+
+async function handleTradeSubmit(event) {
   event.preventDefault();
   if (event.submitter?.value === "cancel") {
     closeDialog("position-dialog");
     return;
   }
   const symbol = document.getElementById("position-symbol").value;
-  const quantity = Number(document.getElementById("position-quantity").value);
-  const costRaw = document.getElementById("position-cost").value;
-  const payload = { quantity, cost_basis_brl: costRaw ? Number(costRaw) : null };
+  const side = document.getElementById("trade-side").value;
+  const payload = side === "buy"
+    ? { side, notional_brl: Number(document.getElementById("trade-notional").value) }
+    : { side, quantity: Number(document.getElementById("trade-quantity").value) };
   try {
-    await api(`/api/portfolio/positions/${encodeURIComponent(symbol)}`, { method: "PUT", body: JSON.stringify(payload) });
-    state.portfolio = await api("/api/portfolio");
+    const result = await api(`/api/portfolio/trades/${encodeURIComponent(symbol)}`, { method: "POST", body: JSON.stringify(payload) });
+    state.portfolio = result.portfolio;
     closeDialog("position-dialog");
     renderPortfolio();
-    toast("Posição salva; alertas serão reavaliados na próxima coleta.");
+    toast(side === "buy" ? "Compra simulada registrada." : "Venda simulada registrada.");
   } catch (error) {
-    if (recoverOperatorSession(error)) return;
     const message = document.getElementById("position-error");
     message.textContent = error.message;
     message.classList.remove("is-hidden");
   }
+}
+
+async function resetSimulator() {
+  if (!window.confirm("Resetar a carteira para R$ 10.000 e apagar as operações?")) return;
+  const payload = await safeApi("/api/portfolio/reset", { method: "POST" });
+  if (!payload) return;
+  state.portfolio = payload;
+  renderPortfolio();
+  toast("Carteira resetada.");
 }
 
 async function handlePortfolioAction(event) {
@@ -542,7 +563,12 @@ function definition(title, body) {
 }
 
 function positionRow(item) {
-  return `<tr><td><strong>${escapeHtml(displaySymbol(item.symbol))}</strong><br><small>${formatNumber(item.quantity, 8)}</small></td><td class="table-number">${formatBRL(item.current_value_brl)}</td><td class="table-number">${formatPct(item.weight_pct)}</td><td class="table-number ${changeClass(item.pnl_brl)}">${formatBRL(item.pnl_brl)}</td><td><div class="table-actions"><button class="icon-button icon-button--small" type="button" data-action="edit" data-symbol="${escapeHtml(item.symbol)}" title="Editar posição" aria-label="Editar posição"><i data-lucide="pencil"></i></button><button class="icon-button icon-button--small" type="button" data-action="delete" data-symbol="${escapeHtml(item.symbol)}" title="Remover posição" aria-label="Remover posição"><i data-lucide="trash-2"></i></button></div></td></tr>`;
+  return `<tr><td><strong>${escapeHtml(displaySymbol(item.symbol))}</strong></td><td class="table-number">${formatNumber(item.quantity, 8)}</td><td class="table-number">${formatBRL(item.average_price_brl)}</td><td class="table-number">${formatBRL(item.current_value_brl)}</td><td class="table-number ${changeClass(item.pnl_brl)}">${formatBRL(item.pnl_brl)}</td></tr>`;
+}
+
+function tradeRow(item) {
+  const label = item.side === "buy" ? "Compra" : "Venda";
+  return `<tr><td>${formatDateTime(item.executed_at)}</td><td><span class="status-pill" data-status="${item.side === "buy" ? "resolved" : "acknowledged"}">${label}</span></td><td>${escapeHtml(displaySymbol(item.symbol))}</td><td class="table-number">${formatNumber(item.quantity, 8)}</td><td class="table-number">${formatBRL(item.notional_brl)}</td></tr>`;
 }
 
 function alertRow(item) {
