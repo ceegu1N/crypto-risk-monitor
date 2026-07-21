@@ -1,0 +1,78 @@
+x-app-environment: &app-environment
+  DATABASE_URL: postgresql+psycopg://crypto_app:${APP_DB_PASSWORD:-crypto_local_password}@db:5432/${POSTGRES_DB:-crypto_risk}
+  SYMBOLS: ${SYMBOLS:-BTCBRL,ETHBRL,SOLBRL,USDTBRL}
+  BINANCE_BASE_URL: ${BINANCE_BASE_URL:-https://data-api.binance.vision}
+  CANDLE_INTERVAL: ${CANDLE_INTERVAL:-15m}
+  BOOTSTRAP_DAYS: ${BOOTSTRAP_DAYS:-7}
+  COLLECTOR_INTERVAL_SECONDS: ${COLLECTOR_INTERVAL_SECONDS:-900}
+  RISK_PROFILE: ${RISK_PROFILE:-moderate}
+  OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:-change_me}
+  SESSION_SECRET: ${SESSION_SECRET:-local-development-secret-change-me}
+  SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+  DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+
+x-app-service: &app-service
+  build:
+    context: .
+  image: crypto-risk-monitor:local
+  environment: *app-environment
+  init: true
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-crypto_risk}
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-crypto_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-crypto_admin_local_password}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-crypto_local_password}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-roles.sh:/docker-entrypoint-initdb.d/10-init-roles.sh:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  migrate:
+    <<: *app-service
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    restart: "no"
+
+  collector:
+    <<: *app-service
+    command: ["python", "-m", "app.collector"]
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
+  web:
+    <<: *app-service
+    ports:
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

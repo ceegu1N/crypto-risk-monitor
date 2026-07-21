@@ -32,7 +32,7 @@ try {
 
     $Web = Start-Process `
         -FilePath $Python `
-        -ArgumentList "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000" `
+        -ArgumentList "-m", "uvicorn", "app.main:create_app", "--factory", "--host", "127.0.0.1", "--port", "8000" `
         -WorkingDirectory $ProjectRoot `
         -RedirectStandardOutput (Join-Path $RuntimeDir "web.out.log") `
         -RedirectStandardError (Join-Path $RuntimeDir "web.err.log") `

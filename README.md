@@ -57,6 +57,35 @@ powershell -ExecutionPolicy Bypass -File .\stop_local.ps1
 
 Os logs e PIDs ficam em `.runtime/`, que não é versionado.
 
+## Execução com Docker
+
+O Compose inicia PostgreSQL, aplica a migração uma única vez e só então libera o
+coletor e a aplicação web:
+
+```powershell
+Copy-Item .env.example .env
+docker compose up --build -d
+docker compose ps
+```
+
+Troque no `.env` as senhas de banco, a senha do operador e o segredo de sessão
+antes de usar fora da sua máquina. O dashboard ficará em
+`http://127.0.0.1:8000` e o banco em `127.0.0.1:5433`.
+
+```powershell
+# Acompanhar a coleta
+docker compose logs -f collector
+
+# Encerrar sem apagar o histórico
+docker compose down
+
+# Encerrar e remover também o volume do PostgreSQL
+docker compose down -v
+```
+
+O último comando apaga os dados locais e deve ser usado apenas quando a intenção
+for reconstruir o ambiente do zero.
+
 ## Comandos individuais
 
 Eles são úteis para entender e diagnosticar cada etapa:
@@ -72,7 +101,7 @@ Eles são úteis para entender e diagnosticar cada etapa:
 .\.venv\Scripts\python.exe -m app.collector
 
 # Aplicação web
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+.\.venv\Scripts\python.exe -m uvicorn app.main:create_app --factory --reload
 ```
 
 ## Testes
