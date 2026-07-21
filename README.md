@@ -6,6 +6,10 @@ USDT/BRL, ADA/BRL, PEPE/BRL e NEAR/BRL.
 
 > Não executa ordens, não acessa corretoras e não constitui recomendação financeira.
 
+## Demonstração
+
+A aplicação está disponível em [crypto-risk-monitor-mu.vercel.app](https://crypto-risk-monitor-mu.vercel.app).
+
 ## O que o projeto entrega
 
 - candles públicos da Binance coletados a cada 15 minutos e preservados no PostgreSQL;
