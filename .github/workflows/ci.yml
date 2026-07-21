@@ -53,7 +53,7 @@ jobs:
           pip-audit --requirement requirements-dev.lock --progress-spinner off
 
       - name: Executar testes
-        run: pytest -q --cov=app --cov-report=term-missing --cov-fail-under=85
+        run: python -m pytest -q --cov=app --cov-report=term-missing --cov-fail-under=85
 
       - name: Construir imagem Docker
         run: docker build --tag crypto-risk-monitor:ci .
