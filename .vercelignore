@@ -2,6 +2,8 @@
 .worktrees/
 .pytest-tmp/
 .pytest-tmp-*/
+.pytest-tmp-*
+.pytest_cache/
 .runtime/
 .venv/
 .env*
