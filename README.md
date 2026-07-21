@@ -65,7 +65,7 @@ $env:TEST_DATABASE_URL="postgresql+psycopg://postgres:postgres@localhost:55432/c
 .\.venv\Scripts\ruff.exe check .
 ```
 
-Na última verificação local, **104 testes passaram**. O projeto também mantém
+Na última verificação local, **105 testes passaram**. O projeto também mantém
 locks de dependências, migrations Alembic, checks de integridade no banco,
 permissões separadas para web/coletor e imagem Docker não-root.
 
