@@ -16,6 +16,9 @@ class IngestionError(RuntimeError):
     """Raised after an ingestion batch is rolled back and its failure is recorded."""
 
 
+_UPSERT_BATCH_SIZE = 5_000
+
+
 @dataclass(frozen=True, slots=True)
 class IngestionResult:
     run_id: int
@@ -151,35 +154,37 @@ def _validate_batch(symbol: str, candles: Sequence[CandleData]) -> None:
 
 
 def _upsert_candles(session: Session, asset_id: int, candles: Sequence[CandleData]) -> None:
-    values = [
-        {
-            "asset_id": asset_id,
-            "opened_at": candle.opened_at,
-            "closed_at": candle.closed_at,
-            "open_price": candle.open_price,
-            "high_price": candle.high_price,
-            "low_price": candle.low_price,
-            "close_price": candle.close_price,
-            "volume": candle.volume,
-            "trade_count": candle.trade_count,
-        }
-        for candle in candles
-    ]
-    statement = insert(Candle).values(values)
-    session.execute(
-        statement.on_conflict_do_update(
-            index_elements=[Candle.asset_id, Candle.opened_at],
-            set_={
-                "closed_at": statement.excluded.closed_at,
-                "open_price": statement.excluded.open_price,
-                "high_price": statement.excluded.high_price,
-                "low_price": statement.excluded.low_price,
-                "close_price": statement.excluded.close_price,
-                "volume": statement.excluded.volume,
-                "trade_count": statement.excluded.trade_count,
-            },
+    for start in range(0, len(candles), _UPSERT_BATCH_SIZE):
+        batch = candles[start : start + _UPSERT_BATCH_SIZE]
+        values = [
+            {
+                "asset_id": asset_id,
+                "opened_at": candle.opened_at,
+                "closed_at": candle.closed_at,
+                "open_price": candle.open_price,
+                "high_price": candle.high_price,
+                "low_price": candle.low_price,
+                "close_price": candle.close_price,
+                "volume": candle.volume,
+                "trade_count": candle.trade_count,
+            }
+            for candle in batch
+        ]
+        statement = insert(Candle).values(values)
+        session.execute(
+            statement.on_conflict_do_update(
+                index_elements=[Candle.asset_id, Candle.opened_at],
+                set_={
+                    "closed_at": statement.excluded.closed_at,
+                    "open_price": statement.excluded.open_price,
+                    "high_price": statement.excluded.high_price,
+                    "low_price": statement.excluded.low_price,
+                    "close_price": statement.excluded.close_price,
+                    "volume": statement.excluded.volume,
+                    "trade_count": statement.excluded.trade_count,
+                },
+            )
         )
-    )
 
 
 def _elapsed_ms(started_at: float) -> int:
