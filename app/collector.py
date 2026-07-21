@@ -97,6 +97,57 @@ def collect_once(
             client.close()
 
 
+def rebuild_quote_volume(
+    settings: Settings,
+    *,
+    days: int = 90,
+    session_factory: sessionmaker[Session] | None = None,
+    market_client: MarketClient | None = None,
+    now: datetime | None = None,
+) -> CollectorResult:
+    """Re-fetch a closed history window so volume uses the quote asset.
+
+    This is an explicit maintenance operation. It shares the collector's
+    advisory lock, upserts the existing candles, and refreshes the latest
+    snapshots without changing prices, trades, or portfolio state.
+    """
+    if days < 1:
+        raise ValueError("days must be at least one")
+
+    factory = session_factory or get_session_factory()
+    boundary = completed_candle_boundary(now)
+    start = boundary - timedelta(days=days)
+    owns_client = market_client is None
+    client = market_client or BinanceClient(base_url=str(settings.binance_base_url))
+
+    try:
+        with factory() as lock_session:
+            acquired = bool(
+                lock_session.scalar(
+                    text("SELECT pg_try_advisory_lock(:key)"),
+                    {"key": COLLECTOR_LOCK_KEY},
+                )
+            )
+            if not acquired:
+                return CollectorResult(False, 0, 0, ())
+            try:
+                return _rebuild_quote_volume_assets(
+                    settings,
+                    factory,
+                    client,
+                    start=start,
+                    boundary=boundary,
+                )
+            finally:
+                lock_session.execute(
+                    text("SELECT pg_advisory_unlock(:key)"),
+                    {"key": COLLECTOR_LOCK_KEY},
+                )
+    finally:
+        if owns_client and isinstance(client, BinanceClient):
+            client.close()
+
+
 def run_collector_loop(
     settings: Settings,
     *,
@@ -162,6 +213,54 @@ def _collect_assets(
         fetch_started_at = datetime.now(UTC)
         try:
             start = _collection_start(factory, symbol, boundary, settings.bootstrap_days)
+            candles = client.fetch_candles(
+                symbol,
+                start=start,
+                end=boundary,
+                interval=settings.candle_interval,
+            )
+        except Exception as exc:
+            ingestion.record_fetch_failure(
+                symbol,
+                exc,
+                started_at=fetch_started_at,
+            )
+            errors.append(f"{symbol}: {type(exc).__name__}: {exc}")
+            continue
+
+        try:
+            result = ingestion.ingest_asset(symbol, candles, calculated_at=boundary)
+        except IngestionError as exc:
+            errors.append(f"{symbol}: {type(exc).__name__}: {exc}")
+            continue
+
+        assets_processed += 1
+        candles_processed += result.candles_processed
+
+    try:
+        _evaluate_alerts(settings, factory, boundary)
+    except Exception as exc:
+        errors.append(f"alerts: {type(exc).__name__}: {exc}")
+
+    return CollectorResult(True, assets_processed, candles_processed, tuple(errors))
+
+
+def _rebuild_quote_volume_assets(
+    settings: Settings,
+    factory: sessionmaker[Session],
+    client: MarketClient,
+    *,
+    start: datetime,
+    boundary: datetime,
+) -> CollectorResult:
+    ingestion = IngestionService(factory)
+    assets_processed = 0
+    candles_processed = 0
+    errors: list[str] = []
+
+    for symbol in settings.symbols:
+        fetch_started_at = datetime.now(UTC)
+        try:
             candles = client.fetch_candles(
                 symbol,
                 start=start,

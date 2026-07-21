@@ -29,7 +29,7 @@ def sample_kline(opened_at_ms: int = 1_700_000_000_000) -> list[object]:
     ]
 
 
-def test_parse_kline_uses_utc_and_decimal_values():
+def test_parse_kline_uses_quote_volume_in_brl():
     candle = parse_kline("BTCBRL", sample_kline())
 
     assert candle.symbol == "BTCBRL"
@@ -38,7 +38,7 @@ def test_parse_kline_uses_utc_and_decimal_values():
     assert candle.high_price == Decimal("105.20")
     assert candle.low_price == Decimal("99.50")
     assert candle.close_price == Decimal("103.40")
-    assert candle.volume == Decimal("12.345")
+    assert candle.volume == Decimal("1270.00")
     assert candle.trade_count == 42
 
 

@@ -13,7 +13,7 @@ A aplicação está disponível em [crypto-risk-monitor-mu.vercel.app](https://c
 ## O que o projeto entrega
 
 - candles públicos da Binance coletados a cada 15 minutos e preservados no PostgreSQL;
-- métricas explicáveis de retorno, volatilidade, drawdown, volume e atraso;
+- métricas explicáveis de retorno, volatilidade, drawdown, volume financeiro em BRL e atraso;
 - carteira anônima persistente por cookie, com R$ 10.000 fictícios;
 - compra, venda, reset e histórico de operações spot sem dinheiro real;
 - gráficos de 24h, 7d, 1M e 3M, agregados no servidor para permanecerem leves;
@@ -35,6 +35,12 @@ carteiras e operações mesmo quando a aplicação é reiniciada. A carteira de 
 visitante é identificada por um token aleatório em cookie; somente o hash desse
 token é armazenado. Limpar os cookies ou trocar de navegador cria outra carteira.
 A retenção da carteira é deslizante e dura 90 dias desde o último acesso.
+
+Quando uma correção de interpretação de dados é necessária, o workflow manual
+`Corrigir volume histórico` rebaixa os candles encerrados da janela escolhida e
+faz upsert no PostgreSQL. Neste projeto, ele é usado uma vez para substituir o
+volume da moeda-base pelo volume financeiro da moeda de cotação (BRL), sem
+alterar preços, operações simuladas ou carteiras.
 
 A cotação usada em uma operação simulada é buscada no endpoint público da
 Binance no momento da operação. A versão inicial não simula taxas, spread ou

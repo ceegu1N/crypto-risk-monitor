@@ -256,11 +256,12 @@ function renderAssetChart(rows) {
   toggleChart("asset-chart", "asset-chart-empty", rows.length > 0);
   if (!rows.length || typeof Chart === "undefined") return;
   state.charts.asset = new Chart(document.getElementById("asset-chart"), {
+    type: "bar",
     data: {
       labels: rows.map((row) => shortTime(row.opened_at)),
       datasets: [
-        { type: "line", label: "Preço (BRL)", data: rows.map((row) => row.close), yAxisID: "price", borderColor: "#087f7b", borderWidth: 2, pointRadius: 0, tension: 0.16 },
-        { type: "bar", label: "Volume", data: rows.map((row) => row.volume), yAxisID: "volume", backgroundColor: "rgba(55,119,168,.22)", borderWidth: 0 },
+        { type: "line", label: "Preço (BRL)", data: rows.map((row) => row.close), yAxisID: "y", borderColor: "#087f7b", borderWidth: 2, pointRadius: 0, tension: 0.16, order: 0 },
+        { type: "bar", label: "Volume (BRL)", data: rows.map((row) => row.volume), yAxisID: "y1", backgroundColor: "rgba(55,119,168,.22)", borderWidth: 0, order: 1 },
       ],
     },
     options: chartOptions(true),
@@ -591,10 +592,10 @@ function alertActionLabel(value) {
 function chartOptions(withVolume) {
   const scales = {
     x: { grid: { display: false }, ticks: { maxTicksLimit: 8, color: "#718087", font: { size: 10 } } },
-    price: { position: "left", grid: { color: "rgba(115,132,140,.12)" }, ticks: { color: "#718087", callback: (value) => compactBRL(value) } },
+    y: { type: "linear", axis: "y", position: "left", grid: { color: "rgba(115,132,140,.12)" }, ticks: { color: "#718087", callback: (value) => compactBRL(value) } },
   };
-  if (withVolume) scales.volume = { position: "right", grid: { display: false }, ticks: { display: false }, beginAtZero: true };
-  return { responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false }, animation: { duration: 250 }, plugins: { legend: { display: withVolume, position: "bottom", labels: { boxWidth: 10, usePointStyle: true } }, tooltip: { callbacks: { label: (context) => context.dataset.yAxisID === "volume" ? ` Volume: ${formatNumber(context.raw, 2)}` : ` Preço: ${formatBRL(context.raw)}` } } }, scales: withVolume ? scales : { x: scales.x, y: scales.price } };
+  if (withVolume) scales.y1 = { type: "linear", axis: "y", position: "right", grid: { drawOnChartArea: false }, beginAtZero: true, ticks: { color: "#718087", callback: (value) => compactBRL(value) } };
+  return { responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false }, animation: { duration: 250 }, plugins: { legend: { display: withVolume, position: "bottom", labels: { boxWidth: 10, usePointStyle: true } }, tooltip: { callbacks: { label: (context) => context.dataset.yAxisID === "y1" ? ` Volume (BRL): ${formatBRL(context.raw)}` : ` Preço: ${formatBRL(context.raw)}` } } }, scales: withVolume ? scales : { x: scales.x, y: scales.y } };
 }
 
 function toggleChart(canvasId, emptyId, hasData) {

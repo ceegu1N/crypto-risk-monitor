@@ -8,7 +8,12 @@ from alembic.config import Config
 from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import sessionmaker
 
-from app.collector import COLLECTOR_LOCK_KEY, collect_once, completed_candle_boundary
+from app.collector import (
+    COLLECTOR_LOCK_KEY,
+    collect_once,
+    completed_candle_boundary,
+    rebuild_quote_volume,
+)
 from app.config import Settings
 from app.integrations.binance import CandleData
 from app.models import (
@@ -101,6 +106,33 @@ def test_collector_updates_seven_assets_without_duplicate_candles(collector_cont
     assert run_count == 14
     assert all(request[2].minute == 0 for request in client.requests)
     assert all(request[1] == request[2] - timedelta(days=90) for request in client.requests[:7])
+
+
+def test_quote_volume_backfill_rewrites_history_for_all_assets(collector_context):
+    factory, settings = collector_context
+    client = FakeMarketClient()
+    now = datetime(2026, 7, 20, 12, 7, tzinfo=UTC)
+
+    result = rebuild_quote_volume(
+        settings,
+        days=30,
+        session_factory=factory,
+        market_client=client,
+        now=now,
+    )
+
+    with factory() as session:
+        candle_count = session.scalar(select(func.count()).select_from(Candle))
+        volume = session.scalar(select(Candle.volume).order_by(Candle.id).limit(1))
+        run_count = session.scalar(select(func.count()).select_from(IngestionRun))
+
+    assert result.lock_acquired is True
+    assert result.assets_processed == 7
+    assert result.candles_processed == 7
+    assert candle_count == 7
+    assert volume == Decimal("10")
+    assert run_count == 7
+    assert all(request[1] == request[2] - timedelta(days=30) for request in client.requests)
 
 
 def test_collector_evaluates_market_and_portfolio_alerts(collector_context):

@@ -20,6 +20,8 @@ class BinanceRateLimitError(BinanceClientError):
 
 @dataclass(frozen=True, slots=True)
 class CandleData:
+    """Candle values with volume expressed in the quote asset."""
+
     symbol: str
     opened_at: datetime
     closed_at: datetime
@@ -41,7 +43,10 @@ def parse_kline(symbol: str, payload: list[Any]) -> CandleData:
         high_price = Decimal(str(payload[2]))
         low_price = Decimal(str(payload[3]))
         close_price = Decimal(str(payload[4]))
-        volume = Decimal(str(payload[5]))
+        # Binance returns base-asset volume at index 5 and quote-asset volume
+        # at index 7. The monitor works with BRL-quoted pairs, so the latter
+        # is the financially meaningful measure for the chart and alerts.
+        volume = Decimal(str(payload[7]))
         trade_count = int(payload[8])
         if min(open_price, high_price, low_price, close_price) <= 0:
             raise ValueError("prices must be positive")
