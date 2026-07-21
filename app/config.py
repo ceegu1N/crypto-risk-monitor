@@ -18,12 +18,12 @@ class Settings(BaseSettings):
 
     database_url: str
     symbols_csv: str = Field(
-        default="BTCBRL,ETHBRL,SOLBRL,USDTBRL",
+        default="BTCBRL,ETHBRL,SOLBRL,USDTBRL,ADABRL,PEPEBRL,NEARBRL",
         validation_alias="SYMBOLS",
     )
     binance_base_url: HttpUrl = HttpUrl("https://data-api.binance.vision")
     candle_interval: Literal["15m"] = "15m"
-    bootstrap_days: PositiveInt = 7
+    bootstrap_days: PositiveInt = 90
     collector_interval_seconds: PositiveInt = 900
     risk_profile: Literal["conservative", "moderate", "aggressive", "custom"] = "moderate"
     operator_password: str = "change_me"

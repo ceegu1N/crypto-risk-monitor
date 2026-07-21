@@ -1,4 +1,5 @@
 import secrets
+from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
@@ -14,7 +15,9 @@ from app.api.schemas import (
     PositionUpsert,
     RiskProfileUpdate,
     RuleUpdate,
+    TradeRequest,
 )
+from app.integrations.binance import BinanceClient, BinanceClientError
 from app.models import (
     Alert,
     AlertEvent,
@@ -37,6 +40,15 @@ from app.services.profiles import (
     set_active_risk_profile,
 )
 from app.services.risk import effective_staleness_minutes
+from app.services.simulator import (
+    InsufficientCash,
+    InsufficientPosition,
+    SimulatorError,
+    build_portfolio_summary,
+    execute_trade,
+    get_or_create_guest_portfolio,
+    reset_guest_portfolio,
+)
 
 router = APIRouter(prefix="/api")
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -154,32 +166,38 @@ def asset_risk(symbol: str, request: Request, session: SessionDep) -> dict[str, 
 def candles(
     symbol: str,
     session: SessionDep,
-    period: Literal["24h", "7d"] = "24h",
-    limit: int = Query(default=500, ge=1, le=1000),
+    period: Literal["24h", "7d", "1m", "3m"] = "24h",
+    limit: int = Query(default=500, ge=1, le=500),
 ) -> list[dict[str, object]]:
     asset = session.scalar(select(Asset).where(Asset.symbol == symbol.strip().upper()))
     if asset is None:
         raise HTTPException(status_code=404, detail="asset not found")
-    since = datetime.now(UTC) - (timedelta(days=1) if period == "24h" else timedelta(days=7))
+    period_config = {
+        "24h": (timedelta(days=1), 15),
+        "7d": (timedelta(days=7), 60),
+        "1m": (timedelta(days=30), 240),
+        "3m": (timedelta(days=90), 720),
+    }
+    history, bucket_minutes = period_config[period]
+    since = datetime.now(UTC) - history
     rows = list(
         session.scalars(
             select(Candle)
             .where(Candle.asset_id == asset.id, Candle.opened_at >= since)
-            .order_by(Candle.opened_at.desc())
-            .limit(limit)
+            .order_by(Candle.opened_at)
         )
     )
-    rows.reverse()
+    aggregated = _aggregate_candles(rows, bucket_minutes)
     return [
         {
-            "opened_at": candle.opened_at,
-            "open": float(candle.open_price),
-            "high": float(candle.high_price),
-            "low": float(candle.low_price),
-            "close": float(candle.close_price),
-            "volume": float(candle.volume),
+            "opened_at": item["opened_at"],
+            "open": float(item["open"]),
+            "high": float(item["high"]),
+            "low": float(item["low"]),
+            "close": float(item["close"]),
+            "volume": float(item["volume"]),
         }
-        for candle in rows
+        for item in aggregated[-limit:]
     ]
 
 
@@ -261,7 +279,24 @@ def risk_profile(request: Request, session: SessionDep) -> dict[str, str | None]
 
 
 @router.get("/portfolio")
-def portfolio(request: Request, session: SessionDep) -> dict[str, object]:
+def portfolio(request: Request, response: Response, session: SessionDep) -> dict[str, object]:
+    try:
+        guest = get_or_create_guest_portfolio(
+            session,
+            request,
+            response,
+            secure_cookie=request.app.state.settings.session_cookie_secure,
+        )
+        payload = build_portfolio_summary(session, guest)
+        session.commit()
+        return payload
+    except Exception:
+        session.rollback()
+        raise
+
+
+@router.get("/admin/portfolio", dependencies=[Depends(require_operator)])
+def admin_portfolio(request: Request, session: SessionDep) -> dict[str, object]:
     try:
         result = calculate_saved_portfolio(session)
     except ValueError as exc:
@@ -298,6 +333,81 @@ def portfolio(request: Request, session: SessionDep) -> dict[str, object]:
             for item in result.positions
         ],
     }
+
+
+@router.post("/portfolio/trades/{symbol}", status_code=status.HTTP_201_CREATED)
+def simulate_trade(
+    symbol: str,
+    payload: TradeRequest,
+    request: Request,
+    response: Response,
+    session: SessionDep,
+) -> dict[str, object]:
+    """Execute a fee-free simulated spot trade for the visitor's wallet."""
+    try:
+        _find_asset(session, symbol)
+        guest = get_or_create_guest_portfolio(
+            session,
+            request,
+            response,
+            secure_cookie=request.app.state.settings.session_cookie_secure,
+        )
+        # Keep the synchronous quote request below the short serverless timeout budget.
+        client = BinanceClient(
+            base_url=str(request.app.state.settings.binance_base_url),
+            timeout_seconds=4.0,
+            max_attempts=2,
+        )
+        try:
+            price = client.fetch_price(symbol)
+        finally:
+            client.close()
+        trade = execute_trade(session, guest.id, symbol, payload, price_brl=price)
+        summary = build_portfolio_summary(session, guest)
+        session.commit()
+    except (InsufficientCash, InsufficientPosition, SimulatorError) as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except BinanceClientError as exc:
+        session.rollback()
+        raise HTTPException(status_code=503, detail="preço atualizado indisponível") from exc
+    except Exception:
+        session.rollback()
+        raise
+    return {
+        "trade": {
+            "id": trade.id,
+            "symbol": symbol.strip().upper(),
+            "side": trade.side,
+            "quantity": float(trade.quantity),
+            "price_brl": float(trade.price_brl),
+            "notional_brl": float(trade.notional_brl),
+            "executed_at": trade.executed_at,
+        },
+        "portfolio": summary,
+    }
+
+
+@router.post("/portfolio/reset")
+def reset_portfolio(
+    request: Request,
+    response: Response,
+    session: SessionDep,
+) -> dict[str, object]:
+    try:
+        guest = get_or_create_guest_portfolio(
+            session,
+            request,
+            response,
+            secure_cookie=request.app.state.settings.session_cookie_secure,
+        )
+        reset_guest_portfolio(session, guest.id)
+        payload = build_portfolio_summary(session, guest)
+        session.commit()
+    except SimulatorError as exc:
+        session.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return payload
 
 
 @router.get("/system")
@@ -548,6 +658,31 @@ def _find_asset(session: Session, symbol: str) -> Asset:
     if asset is None:
         raise HTTPException(status_code=404, detail="asset not found")
     return asset
+
+
+def _aggregate_candles(rows: list[Candle], bucket_minutes: int) -> list[dict[str, object]]:
+    """Reduce stored 15-minute candles while preserving OHLCV semantics."""
+    buckets: OrderedDict[datetime, dict[str, object]] = OrderedDict()
+    bucket_seconds = bucket_minutes * 60
+    for candle in rows:
+        bucket_epoch = int(candle.opened_at.timestamp()) // bucket_seconds * bucket_seconds
+        opened_at = datetime.fromtimestamp(bucket_epoch, tz=UTC)
+        current = buckets.get(opened_at)
+        if current is None:
+            buckets[opened_at] = {
+                "opened_at": opened_at,
+                "open": candle.open_price,
+                "high": candle.high_price,
+                "low": candle.low_price,
+                "close": candle.close_price,
+                "volume": candle.volume,
+            }
+            continue
+        current["high"] = max(current["high"], candle.high_price)  # type: ignore[arg-type]
+        current["low"] = min(current["low"], candle.low_price)  # type: ignore[arg-type]
+        current["close"] = candle.close_price
+        current["volume"] = current["volume"] + candle.volume  # type: ignore[operator]
+    return list(buckets.values())
 
 
 def _latest_snapshot(session: Session, asset_id: int) -> RiskSnapshot | None:

@@ -55,7 +55,7 @@ def test_initial_migration_creates_tables_and_seed_data(test_database_url, monke
                 )
             )
         }
-    assert asset_count == 4
+    assert asset_count == 7
     assert rule_count == 24
     assert rules_by_profile == {
         "aggressive": 6,
@@ -67,6 +67,26 @@ def test_initial_migration_creates_tables_and_seed_data(test_database_url, monke
         "portfolio_concentration": "Concentração do portfólio",
         "volatile_asset_share": "Exposição a ativos voláteis",
     }
+
+    engine.dispose()
+
+
+def test_initial_migration_creates_anonymous_simulator_tables(test_database_url, monkeypatch):
+    engine = create_engine(test_database_url)
+    with engine.begin() as connection:
+        connection.execute(text("DROP SCHEMA public CASCADE"))
+        connection.execute(text("CREATE SCHEMA public"))
+
+    monkeypatch.setenv("DATABASE_URL", test_database_url)
+    config = Config(str(Path(__file__).parents[2] / "alembic.ini"))
+    command.upgrade(config, "head")
+
+    expected_tables = {
+        "anonymous_portfolios",
+        "simulated_positions",
+        "simulated_trades",
+    }
+    assert expected_tables <= set(inspect(engine).get_table_names())
 
     engine.dispose()
 
@@ -211,11 +231,25 @@ def test_runtime_database_roles_enforce_least_privilege(test_database_url, monke
             connection.execute(text("CREATE TABLE writer_must_not_create_tables (id int)"))
 
         with web_engine.begin() as connection:
-            assert connection.scalar(text("SELECT count(*) FROM assets")) == 4
+            assert connection.scalar(text("SELECT count(*) FROM assets")) == 7
             connection.execute(
                 text(
                     "INSERT INTO portfolio_positions (asset_id, quantity) "
                     "SELECT id, 0.01 FROM assets WHERE symbol = 'BTCBRL'"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO anonymous_portfolios (id, identity_hash) "
+                    "VALUES ('00000000-0000-0000-0000-000000000001', 'permission-test-hash')"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO simulated_trades "
+                    "(portfolio_id, asset_id, side, quantity, price_brl, notional_brl) "
+                    "SELECT '00000000-0000-0000-0000-000000000001', id, 'buy', 1, 1, 1 "
+                    "FROM assets WHERE symbol = 'BTCBRL'"
                 )
             )
         with pytest.raises(DBAPIError), web_engine.begin() as connection:

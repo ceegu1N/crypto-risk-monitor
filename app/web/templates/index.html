@@ -72,7 +72,7 @@
         <div class="section-heading">
           <div>
             <h2>Painel de mercado</h2>
-            <p>BTC, ETH, SOL e USDT cotados em reais</p>
+            <p>Sete ativos cotados em reais, com histórico e alertas</p>
           </div>
           <span class="timestamp" id="market-updated">Sem coleta</span>
         </div>
@@ -113,6 +113,8 @@
             <div class="segmented" aria-label="Período do gráfico">
               <button type="button" class="is-active" data-period="24h">24h</button>
               <button type="button" data-period="7d">7d</button>
+              <button type="button" data-period="1m">1M</button>
+              <button type="button" data-period="3m">3M</button>
             </div>
           </div>
         </div>
@@ -128,8 +130,8 @@
 
       <section class="view-panel" id="view-portfolio" data-view-panel="portfolio">
         <div class="section-heading">
-          <div><h2>Portfólio simulado</h2><p>Exposição e concentração com preços de mercado</p></div>
-          <button class="command-button" id="add-position-button" type="button"><i data-lucide="plus"></i> Posição</button>
+          <div><h2>Carteira simulada</h2><p>R$ 10.000 virtuais para testar decisões sem risco financeiro</p></div>
+          <div class="control-row"><button class="icon-button" id="reset-simulator-button" type="button" title="Resetar carteira" aria-label="Resetar carteira"><i data-lucide="rotate-ccw"></i></button><button class="command-button" id="add-position-button" type="button"><i data-lucide="arrow-left-right"></i> Operar</button></div>
         </div>
         <div class="metric-grid metric-grid--five" id="portfolio-kpis"></div>
         <div class="content-grid content-grid--balanced">
@@ -140,10 +142,14 @@
           </section>
           <section class="surface table-surface">
             <div class="surface-heading"><div><span class="surface-kicker">Posições</span><h3>Detalhamento</h3></div></div>
-            <div class="table-wrap"><table><thead><tr><th>Ativo</th><th>Valor</th><th>Peso</th><th>P/L</th><th></th></tr></thead><tbody id="portfolio-table"></tbody></table></div>
+            <div class="table-wrap"><table><thead><tr><th>Ativo</th><th>Quantidade</th><th>Preço médio</th><th>Valor</th><th>P/L</th></tr></thead><tbody id="portfolio-table"></tbody></table></div>
           </section>
         </div>
         <p class="method-note" id="portfolio-note"></p>
+        <section class="surface table-surface">
+          <div class="surface-heading"><div><span class="surface-kicker">Histórico</span><h3>Operações recentes</h3></div></div>
+          <div class="table-wrap"><table><thead><tr><th>Data</th><th>Operação</th><th>Ativo</th><th>Quantidade</th><th>Valor</th></tr></thead><tbody id="trade-table"></tbody></table></div>
+        </section>
       </section>
 
       <section class="view-panel" id="view-alerts" data-view-panel="alerts">
@@ -195,7 +201,7 @@
           <div class="surface-heading"><div><span class="surface-kicker">Auditoria</span><h3>Execuções recentes</h3></div></div>
           <div class="table-wrap"><table><thead><tr><th>Origem</th><th>Status</th><th>Início</th><th>Duração</th><th>Recebidos</th><th>Gravados</th></tr></thead><tbody id="system-runs-table"></tbody></table></div>
         </section>
-        <p class="disclaimer">Monitor informativo. Não executa ordens, não acessa carteiras e não constitui recomendação financeira.</p>
+        <p class="disclaimer">Monitor e simulador educativo. Não executa ordens reais, não acessa carteiras e não constitui recomendação financeira.</p>
       </section>
     </main>
   </div>
@@ -211,12 +217,14 @@
 
   <dialog class="modal" id="position-dialog">
     <form method="dialog" id="position-form">
-      <div class="modal-heading"><div><span class="surface-kicker">Simulação</span><h2>Posição do portfólio</h2></div><button class="icon-button" value="cancel" type="submit" aria-label="Fechar"><i data-lucide="x"></i></button></div>
+      <div class="modal-heading"><div><span class="surface-kicker">Simulação</span><h2>Nova operação</h2></div><button class="icon-button" value="cancel" type="submit" aria-label="Fechar"><i data-lucide="x"></i></button></div>
+      <label class="field"><span>Operação</span><select id="trade-side" required><option value="buy">Comprar</option><option value="sell">Vender</option></select></label>
       <label class="field"><span>Ativo</span><select id="position-symbol" required></select></label>
-      <label class="field"><span>Quantidade</span><input id="position-quantity" type="number" min="0.000000000001" step="any" required></label>
-      <label class="field"><span>Preço médio em BRL</span><input id="position-cost" type="number" min="0.000000000001" step="any" placeholder="Opcional"></label>
+      <label class="field" id="trade-notional-field"><span>Valor da compra em BRL</span><input id="trade-notional" type="number" min="0.01" step="0.01" placeholder="Ex.: 500"></label>
+      <label class="field is-hidden" id="trade-quantity-field"><span>Quantidade para vender</span><input id="trade-quantity" type="number" min="0.000000000001" step="any" placeholder="Ex.: 0.01"></label>
+      <p class="form-hint">A execução usa uma cotação pública atualizada. Não há taxas, spread ou dinheiro real.</p>
       <p class="form-error is-hidden" id="position-error"></p>
-      <button class="command-button command-button--full" type="submit" value="save"><i data-lucide="save"></i> Salvar posição</button>
+      <button class="command-button command-button--full" type="submit" value="trade"><i data-lucide="check"></i> Confirmar operação</button>
     </form>
   </dialog>
 

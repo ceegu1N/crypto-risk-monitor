@@ -81,7 +81,7 @@ def test_completed_boundary_ignores_the_current_unfinished_candle():
     assert completed_candle_boundary(now) == datetime(2026, 7, 20, 12, 0, tzinfo=UTC)
 
 
-def test_collector_updates_four_assets_without_duplicate_candles(collector_context):
+def test_collector_updates_seven_assets_without_duplicate_candles(collector_context):
     factory, settings = collector_context
     client = FakeMarketClient()
     now = datetime(2026, 7, 20, 12, 7, tzinfo=UTC)
@@ -94,13 +94,13 @@ def test_collector_updates_four_assets_without_duplicate_candles(collector_conte
         snapshot_count = session.scalar(select(func.count()).select_from(RiskSnapshot))
         run_count = session.scalar(select(func.count()).select_from(IngestionRun))
     assert first.lock_acquired is True
-    assert first.assets_processed == 4
-    assert second.assets_processed == 4
-    assert candle_count == 4
-    assert snapshot_count == 4
-    assert run_count == 8
+    assert first.assets_processed == 7
+    assert second.assets_processed == 7
+    assert candle_count == 7
+    assert snapshot_count == 7
+    assert run_count == 14
     assert all(request[2].minute == 0 for request in client.requests)
-    assert all(request[1] == request[2] - timedelta(days=7) for request in client.requests[:4])
+    assert all(request[1] == request[2] - timedelta(days=90) for request in client.requests[:7])
 
 
 def test_collector_evaluates_market_and_portfolio_alerts(collector_context):
@@ -125,13 +125,16 @@ def test_collector_evaluates_market_and_portfolio_alerts(collector_context):
         alerts = list(session.scalars(select(Alert).order_by(Alert.id)))
         event_count = session.scalar(select(func.count()).select_from(AlertEvent))
     assert result.errors == ()
-    assert len(alerts) == 5
-    assert event_count == 5
+    assert len(alerts) == 8
+    assert event_count == 8
     assert {alert.dedupe_key for alert in alerts} == {
         "moderate:stale_market_data:BTCBRL",
         "moderate:stale_market_data:ETHBRL",
         "moderate:stale_market_data:SOLBRL",
         "moderate:stale_market_data:USDTBRL",
+        "moderate:stale_market_data:ADABRL",
+        "moderate:stale_market_data:PEPEBRL",
+        "moderate:stale_market_data:NEARBRL",
         "moderate:portfolio_concentration:portfolio",
     }
 
@@ -169,7 +172,7 @@ def test_fetch_failure_is_recorded_and_increases_effective_staleness(collector_c
         active_alerts = list(session.scalars(select(Alert).where(Alert.condition_active.is_(True))))
 
     assert first.errors == ()
-    assert second.assets_processed == 3
+    assert second.assets_processed == 6
     assert len(failed_runs) == 1
     assert "BTCBRL" in (failed_runs[0].error_message or "")
     assert {alert.dedupe_key for alert in active_alerts} == {"moderate:stale_market_data:BTCBRL"}
@@ -206,9 +209,9 @@ def test_ingestion_failure_creates_only_one_audit_run(collector_context):
     with factory() as session:
         runs = list(session.scalars(select(IngestionRun).order_by(IngestionRun.id)))
 
-    assert result.assets_processed == 3
+    assert result.assets_processed == 6
     assert len(result.errors) == 1
-    assert len(runs) == 4
+    assert len(runs) == 7
     assert [run.status for run in runs].count("failed") == 1
 
 
@@ -247,10 +250,10 @@ def test_disabling_a_rule_clears_its_active_alerts(collector_context):
         alerts = list(session.scalars(select(Alert).order_by(Alert.id)))
         actions = list(session.scalars(select(AlertEvent.action).order_by(AlertEvent.id)))
 
-    assert len(alerts) == 4
+    assert len(alerts) == 7
     assert all(alert.status == "resolved" for alert in alerts)
     assert all(alert.condition_active is False for alert in alerts)
-    assert actions.count("disabled") == 4
+    assert actions.count("disabled") == 7
 
 
 def test_collector_uses_the_profile_persisted_by_the_web(collector_context):
@@ -280,6 +283,9 @@ def test_collector_uses_the_profile_persisted_by_the_web(collector_context):
         "conservative:stale_market_data:ETHBRL",
         "conservative:stale_market_data:SOLBRL",
         "conservative:stale_market_data:USDTBRL",
+        "conservative:stale_market_data:ADABRL",
+        "conservative:stale_market_data:PEPEBRL",
+        "conservative:stale_market_data:NEARBRL",
     }
 
 

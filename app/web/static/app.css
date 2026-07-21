@@ -243,6 +243,9 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .asset-icon[data-asset="ETHBRL"] { background: #536fa6; }
 .asset-icon[data-asset="SOLBRL"] { background: #6d4da0; }
 .asset-icon[data-asset="USDTBRL"] { background: #278767; }
+.asset-icon[data-asset="ADABRL"] { background: #3b5f9d; }
+.asset-icon[data-asset="PEPEBRL"] { background: #7d8b22; }
+.asset-icon[data-asset="NEARBRL"] { background: #5b5961; }
 .asset-symbol strong, .asset-symbol small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .asset-symbol small { color: var(--muted); font-size: 10px; }
 .asset-price { display: block; margin-top: 22px; overflow-wrap: anywhere; font-size: 20px; font-weight: 750; }
@@ -355,7 +358,7 @@ tbody tr:hover { background: #fafcfc; }
 .severity-pill[data-severity="high"], .severity-pill[data-severity="critical"] { color: var(--red); background: var(--red-soft); }
 .profile-badge { color: var(--teal); background: var(--teal-soft); }
 
-.method-note, .disclaimer { margin: 12px 2px 0; color: var(--muted); font-size: 11px; }
+.method-note, .disclaimer, .form-hint { margin: 12px 2px 0; color: var(--muted); font-size: 11px; }
 .disclaimer { padding-left: 10px; border-left: 3px solid var(--amber); }
 
 .rule-list { display: grid; gap: 10px; }

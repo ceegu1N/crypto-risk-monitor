@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.config import Settings
 from app.domain.rules import evaluate_market_rules, rules_for_profile
-from app.integrations.binance import CandleData
+from app.integrations.binance import BinanceClient, CandleData
 from app.main import create_app
 from app.models import Alert, AlertRule, AppSetting
 from app.services.alerts import AlertService
@@ -59,6 +59,8 @@ def test_public_market_endpoints_return_persisted_data(api_context):
     assets = client.get("/api/assets")
     market = client.get("/api/market")
     candles = client.get("/api/assets/BTCBRL/candles", params={"period": "24h", "limit": 10})
+    candles_1m = client.get("/api/assets/BTCBRL/candles", params={"period": "1m"})
+    candles_3m = client.get("/api/assets/BTCBRL/candles", params={"period": "3m"})
     alerts = client.get("/api/alerts")
     asset = client.get("/api/assets/BTCBRL")
     risk = client.get("/api/assets/BTCBRL/risk")
@@ -67,15 +69,20 @@ def test_public_market_endpoints_return_persisted_data(api_context):
 
     assert health.status_code == 200
     assert health.json()["database"] == "ok"
-    assert len(assets.json()) == 4
+    assert len(assets.json()) == 7
     assert {item["symbol"] for item in market.json()} == {
         "BTCBRL",
         "ETHBRL",
         "SOLBRL",
         "USDTBRL",
+        "ADABRL",
+        "PEPEBRL",
+        "NEARBRL",
     }
     assert len(candles.json()) == 10
     assert candles.json()[-1]["close"] == pytest.approx(109.9)
+    assert candles_1m.status_code == 200
+    assert candles_3m.status_code == 200
     assert alerts.json()[0]["status"] == "new"
     assert asset.status_code == 200
     assert asset.json()["symbol"] == "BTCBRL"
@@ -111,7 +118,7 @@ def test_operator_login_protects_mutations_and_logout(api_context):
         "/api/portfolio/positions/BTCBRL",
         json={"quantity": 0.01, "cost_basis_brl": 100.0},
     )
-    portfolio = client.get("/api/portfolio")
+    portfolio = client.get("/api/admin/portfolio")
     alert = client.patch(f"/api/alerts/{alert_id}", json={"status": "acknowledged"})
     rule = client.patch(f"/api/rules/{rule_id}", json={"threshold": 4.25})
 
@@ -125,6 +132,57 @@ def test_operator_login_protects_mutations_and_logout(api_context):
 
     assert client.post("/api/auth/logout").status_code == 200
     assert client.patch(f"/api/rules/{rule_id}", json={"enabled": False}).status_code == 401
+
+
+def test_guest_portfolio_gets_a_persistent_starting_balance_and_isolated_cookie(api_context):
+    client, factory, _ = api_context
+
+    first = client.get("/api/portfolio")
+    second = client.get("/api/portfolio")
+
+    assert first.status_code == 200
+    assert first.json()["cash_brl"] == pytest.approx(10_000)
+    assert first.json()["portfolio_id"] == second.json()["portfolio_id"]
+    assert first.json()["positions"] == []
+    with factory() as session:
+        assert session.scalar(text("SELECT count(*) FROM anonymous_portfolios")) == 1
+
+    with TestClient(client.app) as other_client:
+        other = other_client.get("/api/portfolio")
+    assert other.status_code == 200
+    assert other.json()["portfolio_id"] != first.json()["portfolio_id"]
+
+
+def test_guest_can_buy_sell_and_reset_without_touching_legacy_operator_portfolio(
+    api_context,
+    monkeypatch,
+):
+    client, factory, _ = api_context
+    monkeypatch.setattr(BinanceClient, "fetch_price", lambda self, symbol: Decimal("100"))
+
+    bought = client.post(
+        "/api/portfolio/trades/BTCBRL",
+        json={"side": "buy", "notional_brl": 500},
+    )
+    assert bought.status_code == 201
+    assert bought.json()["trade"]["quantity"] == pytest.approx(5)
+    assert bought.json()["portfolio"]["cash_brl"] == pytest.approx(9_500)
+    assert bought.json()["portfolio"]["positions"][0]["quantity"] == pytest.approx(5)
+
+    sold = client.post(
+        "/api/portfolio/trades/BTCBRL",
+        json={"side": "sell", "quantity": 2},
+    )
+    assert sold.status_code == 201
+    assert sold.json()["portfolio"]["cash_brl"] == pytest.approx(9_700)
+    assert sold.json()["portfolio"]["realized_pnl_brl"] == pytest.approx(0)
+
+    reset = client.post("/api/portfolio/reset")
+    assert reset.status_code == 200
+    assert reset.json()["cash_brl"] == pytest.approx(10_000)
+    assert reset.json()["positions"] == []
+    with factory() as session:
+        assert session.scalar(text("SELECT count(*) FROM simulated_trades")) == 0
 
 
 def test_rules_endpoint_uses_the_configured_risk_profile(api_context, test_database_url):

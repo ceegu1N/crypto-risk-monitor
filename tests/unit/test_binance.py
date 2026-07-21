@@ -148,3 +148,14 @@ def test_non_list_response_is_rejected():
             start=datetime(2026, 1, 1, tzinfo=UTC),
             end=datetime(2026, 1, 2, tzinfo=UTC),
         )
+
+
+def test_fetch_price_reads_a_fresh_spot_quote():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v3/ticker/price"
+        assert request.url.params["symbol"] == "BTCBRL"
+        return httpx.Response(200, json={"symbol": "BTCBRL", "price": "345678.90"}, request=request)
+
+    client = BinanceClient(transport=httpx.MockTransport(handler), sleep=lambda _: None)
+
+    assert client.fetch_price("BTCBRL") == Decimal("345678.90")

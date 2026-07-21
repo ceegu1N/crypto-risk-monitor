@@ -3,7 +3,7 @@ name: Coleta agendada
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17,47 * * * *"
+    - cron: "7,22,37,52 * * * *"
 
 permissions:
   contents: read
@@ -30,21 +30,15 @@ jobs:
       - name: Validar configuração protegida
         shell: bash
         env:
-          MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
           COLLECTOR_DATABASE_URL: ${{ secrets.COLLECTOR_DATABASE_URL }}
         run: |
-          if [ -z "$MIGRATION_DATABASE_URL" ] || [ -z "$COLLECTOR_DATABASE_URL" ]; then
-            echo "As URLs de migração e coleta não foram configuradas nos secrets."
+          if [ -z "$COLLECTOR_DATABASE_URL" ]; then
+            echo "COLLECTOR_DATABASE_URL não foi configurada nos secrets."
             exit 1
           fi
 
       - name: Instalar aplicação
         run: python -m pip install --requirement requirements.lock
-
-      - name: Aplicar migrações
-        env:
-          DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
-        run: alembic upgrade head
 
       - name: Coletar candles e avaliar alertas
         env:
