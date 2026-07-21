@@ -1,0 +1,39 @@
+name: Execução única do backfill de volume
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/backfill-once.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crypto-risk-collector
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    if: ${{ !contains(github.event.head_commit.message, '[skip backfill]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Baixar o repositório
+        uses: actions/checkout@v6
+
+      - name: Preparar Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar aplicação
+        run: python -m pip install --requirement requirements.lock
+
+      - name: Corrigir volume dos últimos 90 dias
+        env:
+          DATABASE_URL: ${{ secrets.COLLECTOR_DATABASE_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python -m scripts.backfill_quote_volume --days 90
