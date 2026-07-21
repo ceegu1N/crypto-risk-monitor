@@ -688,11 +688,13 @@ function displaySymbol(symbol) {
 
 function formatBRL(value) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return "--";
-  const digits = Math.abs(Number(value)) < 10 ? 4 : 2;
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2, maximumFractionDigits: digits }).format(value);
+  const numeric = Math.abs(Number(value));
+  const digits = numeric < 0.01 ? 8 : numeric < 10 ? 4 : 2;
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value);
 }
 
 function compactBRL(value) {
+  if (Math.abs(Number(value)) < 0.01) return formatBRL(value);
   return new Intl.NumberFormat("pt-BR", { notation: "compact", style: "currency", currency: "BRL", maximumFractionDigits: 1 }).format(value);
 }
 
