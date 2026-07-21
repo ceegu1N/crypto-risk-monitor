@@ -3,7 +3,7 @@ name: Coleta agendada
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17,47 * * * *"
+    - cron: "7,22,37,52 * * * *"
 
 permissions:
   contents: read
