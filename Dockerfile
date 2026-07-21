@@ -1,4 +1,4 @@
-FROM python:3.12-slim-bookworm
+FROM python:3.12-alpine3.24
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -6,16 +6,19 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN groupadd --gid 10001 app \
-    && useradd --uid 10001 --gid app --create-home --shell /usr/sbin/nologin app
+RUN addgroup --gid 10001 --system app \
+    && adduser --uid 10001 --system --disabled-password --no-create-home \
+        --ingroup app app
+
+COPY requirements.lock ./
+
+RUN python -m pip install --no-cache-dir --requirement requirements.lock
 
 COPY pyproject.toml README.md ./
 COPY app ./app
 COPY migrations ./migrations
 COPY scripts ./scripts
 COPY alembic.ini ./
-
-RUN python -m pip install --no-cache-dir .
 
 USER app:app
 

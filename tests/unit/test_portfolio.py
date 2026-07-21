@@ -37,6 +37,28 @@ def test_position_without_cost_basis_keeps_pnl_unknown():
     assert result.positions[0].pnl_brl is None
 
 
+def test_portfolio_24h_return_uses_each_positions_implied_previous_value():
+    result = calculate_portfolio(
+        [Position("BTCBRL", 1), Position("USDTBRL", 100)],
+        {"BTCBRL": 110, "USDTBRL": 1},
+        {"BTCBRL": 4.0, "USDTBRL": 0.1},
+        returns_24h_pct={"BTCBRL": 10.0, "USDTBRL": 0.0},
+    )
+
+    assert result.return_24h_pct == pytest.approx(5.0)
+
+
+def test_portfolio_24h_return_is_unknown_when_one_position_has_no_return():
+    result = calculate_portfolio(
+        [Position("BTCBRL", 1), Position("USDTBRL", 100)],
+        {"BTCBRL": 110, "USDTBRL": 1},
+        {"BTCBRL": 4.0, "USDTBRL": 0.1},
+        returns_24h_pct={"BTCBRL": 10.0, "USDTBRL": None},
+    )
+
+    assert result.return_24h_pct is None
+
+
 def test_empty_portfolio_returns_zero_exposure():
     result = calculate_portfolio([], {}, {})
 

@@ -19,6 +19,7 @@ def calculate_saved_portfolio(session: Session) -> PortfolioMetrics:
     positions: list[Position] = []
     prices: dict[str, float] = {}
     volatilities: dict[str, float | None] = {}
+    returns_24h: dict[str, float | None] = {}
     for stored, asset in rows:
         snapshot = session.scalar(
             select(RiskSnapshot)
@@ -37,11 +38,17 @@ def calculate_saved_portfolio(session: Session) -> PortfolioMetrics:
         )
         prices[asset.symbol] = float(snapshot.last_price)
         volatilities[asset.symbol] = (
-            float(snapshot.volatility_24h_pct)
-            if snapshot.volatility_24h_pct is not None
-            else None
+            float(snapshot.volatility_24h_pct) if snapshot.volatility_24h_pct is not None else None
         )
-    return calculate_portfolio(positions, prices, volatilities)
+        returns_24h[asset.symbol] = (
+            float(snapshot.return_24h_pct) if snapshot.return_24h_pct is not None else None
+        )
+    return calculate_portfolio(
+        positions,
+        prices,
+        volatilities,
+        returns_24h_pct=returns_24h,
+    )
 
 
 def upsert_position(

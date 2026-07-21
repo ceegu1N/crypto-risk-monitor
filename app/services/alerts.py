@@ -65,7 +65,10 @@ class AlertService:
         events: Sequence[RuleEvent],
         evaluated_codes: Set[str],
         observed_at: datetime,
+        disabled_codes: Set[str] = frozenset(),
     ) -> AlertSyncResult:
+        if not disabled_codes.issubset(evaluated_codes):
+            raise ValueError("disabled rules must be included in evaluated rules")
         event_by_code = {event.code: event for event in events}
         if len(event_by_code) != len(events):
             raise ValueError("duplicate rule events in the same evaluation")
@@ -112,15 +115,17 @@ class AlertService:
                     continue
                 previous_status = alert.status
                 alert.condition_active = False
-                if alert.status in {"new", "acknowledged"}:
+                if code in disabled_codes:
+                    alert.status = "resolved"
+                    alert.resolved_at = observed_at
+                    action = "disabled"
+                elif alert.status in {"new", "acknowledged"}:
                     alert.status = "resolved"
                     alert.resolved_at = observed_at
                     action = "resolved"
                 else:
                     action = "condition_cleared"
-                session.add(
-                    _alert_event(alert, action, previous_status, alert.status, observed_at)
-                )
+                session.add(_alert_event(alert, action, previous_status, alert.status, observed_at))
                 alert_ids.append(alert.id)
 
         attempted = self._notify_without_breaking_monitoring(notifications)
@@ -180,7 +185,9 @@ class AlertService:
     ) -> str:
         previous_status = alert.status
         previous_value = float(alert.observed_value)
-        if alert.status in {"resolved", "dismissed"}:
+        if alert.status == "dismissed" and alert.condition_active:
+            action = "repeated"
+        elif alert.status in {"resolved", "dismissed"}:
             alert.status = "new"
             alert.resolved_at = None
             action = "reopened"

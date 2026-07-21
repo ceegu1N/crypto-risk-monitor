@@ -26,6 +26,16 @@ VALUE_TYPE = Numeric(36, 12)
 METRIC_TYPE = Numeric(20, 8)
 
 
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[str] = mapped_column(String(160), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Asset(Base):
     __tablename__ = "assets"
 
@@ -47,8 +57,22 @@ class Candle(Base):
     __tablename__ = "candles"
     __table_args__ = (
         UniqueConstraint("asset_id", "opened_at", name="uq_candles_asset_opened"),
+        CheckConstraint(
+            "open_price > 0 AND high_price > 0 AND low_price > 0 AND close_price > 0",
+            name="prices_positive",
+        ),
         CheckConstraint("high_price >= low_price", name="high_not_below_low"),
+        CheckConstraint(
+            "high_price >= open_price AND high_price >= close_price",
+            name="high_contains_open_close",
+        ),
+        CheckConstraint(
+            "low_price <= open_price AND low_price <= close_price",
+            name="low_contains_open_close",
+        ),
+        CheckConstraint("closed_at > opened_at", name="valid_time_window"),
         CheckConstraint("volume >= 0", name="volume_non_negative"),
+        CheckConstraint("trade_count >= 0", name="trade_count_non_negative"),
         Index("ix_candles_asset_opened_desc", "asset_id", "opened_at"),
     )
 
@@ -73,7 +97,24 @@ class Candle(Base):
 
 class RiskSnapshot(Base):
     __tablename__ = "risk_snapshots"
-    __table_args__ = (Index("ix_risk_snapshots_asset_calculated", "asset_id", "calculated_at"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "asset_id",
+            "calculated_at",
+            name="uq_risk_snapshots_asset_calculated",
+        ),
+        CheckConstraint("last_price > 0", name="last_price_positive"),
+        CheckConstraint(
+            "volatility_24h_pct IS NULL OR volatility_24h_pct >= 0",
+            name="volatility_non_negative",
+        ),
+        CheckConstraint(
+            "volume_ratio IS NULL OR volume_ratio >= 0",
+            name="volume_ratio_non_negative",
+        ),
+        CheckConstraint("staleness_minutes >= 0", name="staleness_non_negative"),
+        Index("ix_risk_snapshots_asset_calculated", "asset_id", "calculated_at"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     asset_id: Mapped[int] = mapped_column(
@@ -200,6 +241,9 @@ class IngestionRun(Base):
     __tablename__ = "ingestion_runs"
     __table_args__ = (
         CheckConstraint("status IN ('running', 'success', 'failed')", name="valid_status"),
+        CheckConstraint("duration_ms IS NULL OR duration_ms >= 0", name="duration_non_negative"),
+        CheckConstraint("candles_received >= 0", name="received_non_negative"),
+        CheckConstraint("candles_upserted >= 0", name="upserted_non_negative"),
         Index("ix_ingestion_runs_started", "started_at"),
     )
 

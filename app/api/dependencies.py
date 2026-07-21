@@ -15,4 +15,3 @@ def require_operator(request: Request) -> None:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="operator authentication required",
         )
-

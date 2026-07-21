@@ -11,12 +11,23 @@ from sqlalchemy.orm import sessionmaker
 from app.collector import COLLECTOR_LOCK_KEY, collect_once, completed_candle_boundary
 from app.config import Settings
 from app.integrations.binance import CandleData
-from app.models import Alert, AlertEvent, AlertRule, Asset, Candle, IngestionRun, PortfolioPosition
+from app.models import (
+    Alert,
+    AlertEvent,
+    AlertRule,
+    AppSetting,
+    Asset,
+    Candle,
+    IngestionRun,
+    PortfolioPosition,
+    RiskSnapshot,
+)
 
 
 class FakeMarketClient:
     def __init__(self) -> None:
         self.requests: list[tuple[str, datetime, datetime]] = []
+        self.fail_symbols: set[str] = set()
 
     def fetch_candles(
         self,
@@ -27,6 +38,8 @@ class FakeMarketClient:
         interval: str = "15m",
     ) -> list[CandleData]:
         self.requests.append((symbol, start, end))
+        if symbol in self.fail_symbols:
+            raise RuntimeError(f"upstream unavailable for {symbol}")
         opened_at = end - timedelta(minutes=15)
         return [
             CandleData(
@@ -78,11 +91,13 @@ def test_collector_updates_four_assets_without_duplicate_candles(collector_conte
 
     with factory() as session:
         candle_count = session.scalar(select(func.count()).select_from(Candle))
+        snapshot_count = session.scalar(select(func.count()).select_from(RiskSnapshot))
         run_count = session.scalar(select(func.count()).select_from(IngestionRun))
     assert first.lock_acquired is True
     assert first.assets_processed == 4
     assert second.assets_processed == 4
     assert candle_count == 4
+    assert snapshot_count == 4
     assert run_count == 8
     assert all(request[2].minute == 0 for request in client.requests)
     assert all(request[1] == request[2] - timedelta(days=7) for request in client.requests[:4])
@@ -118,6 +133,153 @@ def test_collector_evaluates_market_and_portfolio_alerts(collector_context):
         "moderate:stale_market_data:SOLBRL",
         "moderate:stale_market_data:USDTBRL",
         "moderate:portfolio_concentration:portfolio",
+    }
+
+
+def test_fetch_failure_is_recorded_and_increases_effective_staleness(collector_context):
+    factory, settings = collector_context
+    client = FakeMarketClient()
+    first_now = datetime(2026, 7, 20, 12, 7, tzinfo=UTC)
+
+    with factory.begin() as session:
+        rules = list(session.scalars(select(AlertRule)))
+        for rule in rules:
+            rule.enabled = rule.profile == "moderate" and rule.code == "stale_market_data"
+            if rule.enabled:
+                rule.threshold = Decimal("60")
+
+    first = collect_once(
+        settings,
+        session_factory=factory,
+        market_client=client,
+        now=first_now,
+    )
+    client.fail_symbols.add("BTCBRL")
+    second = collect_once(
+        settings,
+        session_factory=factory,
+        market_client=client,
+        now=first_now + timedelta(hours=2),
+    )
+
+    with factory() as session:
+        failed_runs = list(
+            session.scalars(select(IngestionRun).where(IngestionRun.status == "failed"))
+        )
+        active_alerts = list(session.scalars(select(Alert).where(Alert.condition_active.is_(True))))
+
+    assert first.errors == ()
+    assert second.assets_processed == 3
+    assert len(failed_runs) == 1
+    assert "BTCBRL" in (failed_runs[0].error_message or "")
+    assert {alert.dedupe_key for alert in active_alerts} == {"moderate:stale_market_data:BTCBRL"}
+
+
+def test_ingestion_failure_creates_only_one_audit_run(collector_context):
+    factory, settings = collector_context
+
+    class InvalidBatchClient(FakeMarketClient):
+        def fetch_candles(self, symbol, **kwargs):
+            rows = super().fetch_candles(symbol, **kwargs)
+            if symbol == "BTCBRL":
+                candle = rows[0]
+                rows[0] = CandleData(
+                    symbol="ETHBRL",
+                    opened_at=candle.opened_at,
+                    closed_at=candle.closed_at,
+                    open_price=candle.open_price,
+                    high_price=candle.high_price,
+                    low_price=candle.low_price,
+                    close_price=candle.close_price,
+                    volume=candle.volume,
+                    trade_count=candle.trade_count,
+                )
+            return rows
+
+    result = collect_once(
+        settings,
+        session_factory=factory,
+        market_client=InvalidBatchClient(),
+        now=datetime(2026, 7, 20, 12, 7, tzinfo=UTC),
+    )
+
+    with factory() as session:
+        runs = list(session.scalars(select(IngestionRun).order_by(IngestionRun.id)))
+
+    assert result.assets_processed == 3
+    assert len(result.errors) == 1
+    assert len(runs) == 4
+    assert [run.status for run in runs].count("failed") == 1
+
+
+def test_disabling_a_rule_clears_its_active_alerts(collector_context):
+    factory, settings = collector_context
+    client = FakeMarketClient()
+    first_now = datetime(2026, 7, 20, 12, 7, tzinfo=UTC)
+
+    with factory.begin() as session:
+        rules = list(session.scalars(select(AlertRule)))
+        for rule in rules:
+            rule.enabled = rule.profile == "moderate" and rule.code == "stale_market_data"
+            if rule.enabled:
+                rule.threshold = Decimal("0")
+
+    collect_once(settings, session_factory=factory, market_client=client, now=first_now)
+
+    with factory.begin() as session:
+        rule = session.scalar(
+            select(AlertRule).where(
+                AlertRule.profile == "moderate",
+                AlertRule.code == "stale_market_data",
+            )
+        )
+        assert rule is not None
+        rule.enabled = False
+
+    collect_once(
+        settings,
+        session_factory=factory,
+        market_client=client,
+        now=first_now + timedelta(minutes=15),
+    )
+
+    with factory() as session:
+        alerts = list(session.scalars(select(Alert).order_by(Alert.id)))
+        actions = list(session.scalars(select(AlertEvent.action).order_by(AlertEvent.id)))
+
+    assert len(alerts) == 4
+    assert all(alert.status == "resolved" for alert in alerts)
+    assert all(alert.condition_active is False for alert in alerts)
+    assert actions.count("disabled") == 4
+
+
+def test_collector_uses_the_profile_persisted_by_the_web(collector_context):
+    factory, settings = collector_context
+    client = FakeMarketClient()
+
+    with factory.begin() as session:
+        session.add(AppSetting(key="active_risk_profile", value="conservative"))
+        rules = list(session.scalars(select(AlertRule)))
+        for rule in rules:
+            rule.enabled = rule.profile == "conservative" and rule.code == "stale_market_data"
+            if rule.enabled:
+                rule.threshold = Decimal("0")
+
+    collect_once(
+        settings,
+        session_factory=factory,
+        market_client=client,
+        now=datetime(2026, 7, 20, 12, 7, tzinfo=UTC),
+    )
+
+    with factory() as session:
+        keys = set(session.scalars(select(Alert.dedupe_key)))
+
+    assert keys == {
+        "conservative:stale_market_data:BTCBRL",
+        "conservative:stale_market_data:ETHBRL",
+        "conservative:stale_market_data:SOLBRL",
+        "conservative:stale_market_data:USDTBRL",
     }
 
 

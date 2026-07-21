@@ -157,7 +157,7 @@ def _profile_rules(
         ),
         RiskRule(
             "portfolio_concentration",
-            "Concentracao do portfolio",
+            "Concentração do portfólio",
             "max_position_weight_pct",
             "gte",
             max_position,
@@ -167,7 +167,7 @@ def _profile_rules(
         ),
         RiskRule(
             "volatile_asset_share",
-            "Exposicao a ativos volateis",
+            "Exposição a ativos voláteis",
             "volatile_asset_share_pct",
             "gte",
             volatile_share,

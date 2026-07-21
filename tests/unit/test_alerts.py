@@ -1,3 +1,4 @@
+import traceback
 from datetime import UTC, datetime
 
 import httpx
@@ -63,6 +64,26 @@ def test_discord_posts_a_compact_alert_message():
     assert "BTC/BRL" in received[0]["embeds"][0]["description"]
 
 
+def test_discord_failure_does_not_expose_the_webhook_secret():
+    webhook = "https://discord.example/api/webhooks/123/super-secret-token"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, request=request)
+
+    notifier = DiscordNotifier(webhook, transport=httpx.MockTransport(handler))
+
+    try:
+        notifier.notify(_notification())
+    except Exception:  # noqa: BLE001 - the traceback is the behavior under test
+        rendered = traceback.format_exc()
+    else:
+        pytest.fail("a failed Discord request must raise an exception")
+
+    assert "super-secret-token" not in rendered
+    assert webhook not in rendered
+    assert "Discord webhook request failed" in rendered
+
+
 def _notification() -> AlertNotification:
     return AlertNotification(
         code="volatility_24h",
@@ -72,4 +93,3 @@ def _notification() -> AlertNotification:
         message="Valor observado 4,50%; limite 4,00%.",
         observed_at=datetime(2026, 7, 20, 12, tzinfo=UTC),
     )
-

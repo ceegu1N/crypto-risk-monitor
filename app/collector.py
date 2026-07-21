@@ -21,8 +21,10 @@ from app.integrations.binance import BinanceClient, CandleData
 from app.integrations.discord import DiscordNotifier
 from app.models import AlertRule, Asset, Candle, RiskSnapshot
 from app.services.alerts import AlertService
-from app.services.ingestion import IngestionService
+from app.services.ingestion import IngestionError, IngestionService
 from app.services.portfolio import calculate_saved_portfolio
+from app.services.profiles import get_active_risk_profile
+from app.services.risk import effective_staleness_minutes
 
 COLLECTOR_LOCK_KEY = 4_319_775_013
 INTERVAL_MINUTES = 15
@@ -112,7 +114,7 @@ def run_collector_loop(
 def report_result(result: CollectorResult) -> None:
     timestamp = datetime.now(UTC).isoformat(timespec="seconds")
     if not result.lock_acquired:
-        print(f"[{timestamp}] ciclo ignorado: outro coletor esta ativo", flush=True)
+        print(f"[{timestamp}] ciclo ignorado: outro coletor está ativo", flush=True)
         return
     print(
         f"[{timestamp}] ativos={result.assets_processed} "
@@ -128,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--once",
         action="store_true",
-        help="executa um unico ciclo e encerra",
+        help="executa um único ciclo e encerra",
     )
     args = parser.parse_args(argv)
     settings = get_settings()
@@ -157,6 +159,7 @@ def _collect_assets(
     errors: list[str] = []
 
     for symbol in settings.symbols:
+        fetch_started_at = datetime.now(UTC)
         try:
             start = _collection_start(factory, symbol, boundary, settings.bootstrap_days)
             candles = client.fetch_candles(
@@ -165,11 +168,23 @@ def _collect_assets(
                 end=boundary,
                 interval=settings.candle_interval,
             )
-            result = ingestion.ingest_asset(symbol, candles, calculated_at=boundary)
-            assets_processed += 1
-            candles_processed += result.candles_processed
         except Exception as exc:
+            ingestion.record_fetch_failure(
+                symbol,
+                exc,
+                started_at=fetch_started_at,
+            )
             errors.append(f"{symbol}: {type(exc).__name__}: {exc}")
+            continue
+
+        try:
+            result = ingestion.ingest_asset(symbol, candles, calculated_at=boundary)
+        except IngestionError as exc:
+            errors.append(f"{symbol}: {type(exc).__name__}: {exc}")
+            continue
+
+        assets_processed += 1
+        candles_processed += result.candles_processed
 
     try:
         _evaluate_alerts(settings, factory, boundary)
@@ -199,40 +214,57 @@ def _evaluate_alerts(
     factory: sessionmaker[Session],
     observed_at: datetime,
 ) -> None:
-    rules = _enabled_rules(factory, settings.risk_profile)
+    profile = get_active_risk_profile(factory, fallback=settings.risk_profile)
+    rules = _enabled_rules(factory, profile)
     webhook_url = str(settings.discord_webhook_url) if settings.discord_webhook_url else None
     notifier = DiscordNotifier(webhook_url) if webhook_url else None
     service = AlertService(factory, notifier)
     try:
         market_rules = tuple(rule for rule in rules if rule.scope == "market")
+        disabled_market_codes = _disabled_rule_codes(
+            factory,
+            profile,
+            "market",
+        )
         for symbol in settings.symbols:
-            metrics = _latest_market_metrics(factory, symbol)
+            metrics = _latest_market_metrics(factory, symbol, observed_at)
             if metrics is None:
-                continue
-            evaluated_codes = frozenset(
-                rule.code for rule in market_rules if metrics.get(rule.metric) is not None
-            )
-            events = evaluate_rules(metrics, market_rules, scope="market")
+                evaluated_codes = disabled_market_codes
+                events = ()
+            else:
+                evaluated_codes = disabled_market_codes | frozenset(
+                    rule.code for rule in market_rules if metrics.get(rule.metric) is not None
+                )
+                events = evaluate_rules(metrics, market_rules, scope="market")
             service.sync(
-                profile=settings.risk_profile,
+                profile=profile,
                 scope="market",
                 asset_symbol=symbol,
                 events=events,
                 evaluated_codes=evaluated_codes,
                 observed_at=observed_at,
+                disabled_codes=disabled_market_codes,
             )
 
         portfolio_rules = tuple(rule for rule in rules if rule.scope == "portfolio")
+        disabled_portfolio_codes = _disabled_rule_codes(
+            factory,
+            profile,
+            "portfolio",
+        )
         portfolio_metrics = _portfolio_metrics(factory)
-        evaluated_codes = frozenset(rule.code for rule in portfolio_rules)
+        evaluated_codes = disabled_portfolio_codes | frozenset(
+            rule.code for rule in portfolio_rules
+        )
         events = evaluate_rules(portfolio_metrics, portfolio_rules, scope="portfolio")
         service.sync(
-            profile=settings.risk_profile,
+            profile=profile,
             scope="portfolio",
             asset_symbol=None,
             events=events,
             evaluated_codes=evaluated_codes,
             observed_at=observed_at,
+            disabled_codes=disabled_portfolio_codes,
         )
     finally:
         if notifier is not None:
@@ -266,9 +298,27 @@ def _enabled_rules(
     )
 
 
+def _disabled_rule_codes(
+    factory: sessionmaker[Session],
+    profile: str,
+    scope: RuleScope,
+) -> frozenset[str]:
+    with factory() as session:
+        return frozenset(
+            session.scalars(
+                select(AlertRule.code).where(
+                    AlertRule.profile == profile,
+                    AlertRule.scope == scope,
+                    AlertRule.enabled.is_(False),
+                )
+            )
+        )
+
+
 def _latest_market_metrics(
     factory: sessionmaker[Session],
     symbol: str,
+    observed_at: datetime,
 ) -> dict[str, float | None] | None:
     with factory() as session:
         snapshot = session.scalar(
@@ -286,7 +336,10 @@ def _latest_market_metrics(
         "volatility_24h_pct": _optional_float(snapshot.volatility_24h_pct),
         "drawdown_7d_pct": _optional_float(snapshot.drawdown_7d_pct),
         "volume_ratio": _optional_float(snapshot.volume_ratio),
-        "staleness_minutes": float(snapshot.staleness_minutes),
+        "staleness_minutes": effective_staleness_minutes(
+            snapshot,
+            observed_at=observed_at,
+        ),
     }
 
 

@@ -14,6 +14,10 @@ class AlertNotification:
     observed_at: datetime
 
 
+class DiscordNotificationError(RuntimeError):
+    """Report a webhook failure without retaining the secret URL."""
+
+
 class DiscordNotifier:
     def __init__(
         self,
@@ -28,24 +32,28 @@ class DiscordNotifier:
     def notify(self, notification: AlertNotification) -> bool:
         if not self.webhook_url:
             return False
-        response = self.http.post(
-            self.webhook_url,
-            json={
-                "username": "Crypto Risk Monitor",
-                "embeds": [
-                    {
-                        "title": notification.label,
-                        "description": (
-                            f"**{_display_symbol(notification.symbol)}**\n{notification.message}"
-                        ),
-                        "color": _severity_color(notification.severity),
-                        "footer": {"text": f"Regra: {notification.code}"},
-                        "timestamp": notification.observed_at.isoformat(),
-                    }
-                ],
-            },
-        )
-        response.raise_for_status()
+        try:
+            response = self.http.post(
+                self.webhook_url,
+                json={
+                    "username": "Crypto Risk Monitor",
+                    "embeds": [
+                        {
+                            "title": notification.label,
+                            "description": (
+                                f"**{_display_symbol(notification.symbol)}**\n"
+                                f"{notification.message}"
+                            ),
+                            "color": _severity_color(notification.severity),
+                            "footer": {"text": f"Regra: {notification.code}"},
+                            "timestamp": notification.observed_at.isoformat(),
+                        }
+                    ],
+                },
+            )
+            response.raise_for_status()
+        except httpx.HTTPError:
+            raise DiscordNotificationError("Discord webhook request failed") from None
         return True
 
     def close(self) -> None:
@@ -61,7 +69,4 @@ def _display_symbol(symbol: str | None) -> str:
 
 
 def _severity_color(severity: str) -> int:
-    return {"warning": 0xF2B84B, "high": 0xF06A4A, "critical": 0xD9364A}.get(
-        severity, 0x5C9EAD
-    )
-
+    return {"warning": 0xF2B84B, "high": 0xF06A4A, "critical": 0xD9364A}.get(severity, 0x5C9EAD)

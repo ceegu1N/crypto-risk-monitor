@@ -38,7 +38,7 @@ class IngestionService:
         normalized_symbol = symbol.strip().upper()
         started_at = datetime.now(UTC)
         clock_started = perf_counter()
-        run_id = self._start_run(started_at, len(candles))
+        run_id = self._start_run(normalized_symbol, started_at, len(candles))
         try:
             _validate_batch(normalized_symbol, candles)
             with self.session_factory.begin() as session:
@@ -70,11 +70,39 @@ class IngestionService:
             self._record_failure(run_id, clock_started, exc)
             raise IngestionError(f"could not ingest {normalized_symbol}: {exc}") from exc
 
-    def _start_run(self, started_at: datetime, received: int) -> int:
+    def record_fetch_failure(
+        self,
+        symbol: str,
+        exc: Exception,
+        *,
+        started_at: datetime,
+    ) -> int:
+        """Persist a source failure that happened before a candle batch existed."""
+        finished_at = datetime.now(UTC)
+        normalized_symbol = symbol.strip().upper()
+        with self.session_factory.begin() as session:
+            run = IngestionRun(
+                status="failed",
+                source=f"binance:{normalized_symbol}",
+                started_at=started_at,
+                finished_at=finished_at,
+                duration_ms=max(
+                    round((finished_at - started_at).total_seconds() * 1000),
+                    0,
+                ),
+                candles_received=0,
+                candles_upserted=0,
+                error_message=(f"{normalized_symbol}: {type(exc).__name__}: {exc}")[:1000],
+            )
+            session.add(run)
+            session.flush()
+            return run.id
+
+    def _start_run(self, symbol: str, started_at: datetime, received: int) -> int:
         with self.session_factory.begin() as session:
             run = IngestionRun(
                 status="running",
-                source="binance",
+                source=f"binance:{symbol}",
                 started_at=started_at,
                 candles_received=received,
                 candles_upserted=0,

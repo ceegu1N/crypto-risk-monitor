@@ -105,3 +105,67 @@ def test_invalid_manual_transition_does_not_change_alert(alert_context):
 
     with alert_context() as session:
         assert session.get(Alert, result.alert_ids[0]).status == "resolved"
+
+
+def test_dismissed_alert_reopens_only_after_the_condition_clears(alert_context):
+    service = AlertService(alert_context)
+    rules = rules_for_profile("moderate")
+    event = evaluate_market_rules({"volatility_24h_pct": 4.5}, rules)
+    base_time = datetime(2026, 7, 20, 12, tzinfo=UTC)
+    result = service.sync(
+        profile="moderate",
+        scope="market",
+        asset_symbol="BTCBRL",
+        events=event,
+        evaluated_codes={"volatility_24h"},
+        observed_at=base_time,
+    )
+    alert_id = result.alert_ids[0]
+    service.transition(alert_id, "dismissed", actor="operator")
+
+    service.sync(
+        profile="moderate",
+        scope="market",
+        asset_symbol="BTCBRL",
+        events=event,
+        evaluated_codes={"volatility_24h"},
+        observed_at=base_time + timedelta(minutes=15),
+    )
+    with alert_context() as session:
+        still_active = session.get(Alert, alert_id)
+        assert still_active is not None
+        assert still_active.status == "dismissed"
+        assert still_active.condition_active is True
+
+    service.sync(
+        profile="moderate",
+        scope="market",
+        asset_symbol="BTCBRL",
+        events=[],
+        evaluated_codes={"volatility_24h"},
+        observed_at=base_time + timedelta(minutes=30),
+    )
+    service.sync(
+        profile="moderate",
+        scope="market",
+        asset_symbol="BTCBRL",
+        events=event,
+        evaluated_codes={"volatility_24h"},
+        observed_at=base_time + timedelta(minutes=45),
+    )
+
+    with alert_context() as session:
+        reopened = session.get(Alert, alert_id)
+        assert reopened is not None
+        assert reopened.status == "new"
+        assert reopened.condition_active is True
+        actions = session.scalars(
+            select(AlertEvent.action).where(AlertEvent.alert_id == alert_id).order_by(AlertEvent.id)
+        ).all()
+    assert actions == [
+        "triggered",
+        "dismissed",
+        "repeated",
+        "condition_cleared",
+        "reopened",
+    ]

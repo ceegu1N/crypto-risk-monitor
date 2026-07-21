@@ -1,15 +1,21 @@
 "use strict";
 
+const REFRESH_INTERVAL_MS = 60_000;
+
 const state = {
   market: [],
   alerts: [],
   portfolio: null,
   rules: [],
+  riskProfile: { profile: "moderate", custom_base_profile: null },
   system: null,
+  runs: [],
   authenticated: false,
   selectedSymbol: "BTCBRL",
   selectedPeriod: "24h",
   alertFilter: "active",
+  currentView: "market",
+  refreshing: false,
   charts: { market: null, asset: null, portfolio: null },
 };
 
@@ -27,6 +33,9 @@ window.addEventListener("DOMContentLoaded", () => {
   bindControls();
   refreshIcons();
   refreshAll();
+  window.setInterval(() => {
+    if (!document.hidden) refreshAll();
+  }, REFRESH_INTERVAL_MS);
 });
 
 function bindNavigation() {
@@ -70,10 +79,13 @@ function bindControls() {
   document.getElementById("portfolio-table").addEventListener("click", handlePortfolioAction);
   document.getElementById("alerts-table").addEventListener("click", handleAlertAction);
   document.getElementById("rules-list").addEventListener("click", handleRuleAction);
+  document.getElementById("risk-profile-select").addEventListener("change", handleProfileChange);
+  document.getElementById("reset-risk-profile").addEventListener("click", handleProfileReset);
 }
 
 function setView(view) {
   if (!viewMeta[view]) return;
+  state.currentView = view;
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("is-active", item.dataset.view === view));
   document.querySelectorAll(".view-panel").forEach((panel) => panel.classList.toggle("is-active", panel.dataset.viewPanel === view));
   document.getElementById("view-eyebrow").textContent = viewMeta[view][0];
@@ -83,34 +95,50 @@ function setView(view) {
 }
 
 async function refreshAll() {
+  if (state.refreshing) return;
+  state.refreshing = true;
   const refreshButton = document.getElementById("refresh-button");
+  refreshButton.disabled = true;
+  refreshButton.setAttribute("aria-busy", "true");
   refreshButton.classList.add("is-spinning");
   hideBanner();
   try {
-    const [market, alerts, portfolio, rules, system, session] = await Promise.all([
-      api("/api/market"),
-      api("/api/alerts"),
-      api("/api/portfolio"),
-      api("/api/rules"),
-      api("/api/system"),
-      api("/api/auth/session"),
-    ]);
-    state.market = market;
-    state.alerts = alerts;
-    state.portfolio = portfolio;
-    state.rules = rules;
-    state.system = system;
-    state.authenticated = session.authenticated;
+    const resources = [
+      { label: "mercado", load: api("/api/market"), apply: (value) => { state.market = value; } },
+      { label: "alertas", load: api("/api/alerts"), apply: (value) => { state.alerts = value; } },
+      { label: "portfólio", load: api("/api/portfolio"), apply: (value) => { state.portfolio = value; } },
+      { label: "regras", load: api("/api/rules"), apply: (value) => { state.rules = value; } },
+      { label: "perfil", load: api("/api/settings/risk-profile"), apply: (value) => { state.riskProfile = value; } },
+      { label: "sistema", load: api("/api/system"), apply: (value) => { state.system = value; } },
+      { label: "execuções", load: api("/api/system/runs?limit=12"), apply: (value) => { state.runs = value; } },
+      { label: "sessão", load: api("/api/auth/session"), apply: (value) => { state.authenticated = value.authenticated; } },
+    ];
+    const results = await Promise.allSettled(resources.map((resource) => resource.load));
+    const failed = [];
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled") {
+        resources[index].apply(result.value);
+      } else {
+        failed.push(resources[index].label);
+      }
+    });
     if (!state.market.some((item) => item.symbol === state.selectedSymbol) && state.market.length) {
       state.selectedSymbol = state.market[0].symbol;
     }
     renderAll();
-    await loadMarketChart();
-    setSystemState(true);
+    if (results[0].status === "fulfilled" && state.market.length) await loadMarketChart();
+    if (results[0].status === "fulfilled" && state.currentView === "asset") {
+      await loadAssetCandles();
+    }
+    setSystemState(results[0].status === "fulfilled" && results[5].status === "fulfilled");
+    if (failed.length) showBanner(`Atualização parcial: falha em ${failed.join(", ")}.`);
   } catch (error) {
     showBanner(error.message || "Não foi possível atualizar o painel.");
     setSystemState(false);
   } finally {
+    state.refreshing = false;
+    refreshButton.disabled = false;
+    refreshButton.removeAttribute("aria-busy");
     refreshButton.classList.remove("is-spinning");
     refreshIcons();
   }
@@ -131,17 +159,18 @@ function renderAll() {
 function renderMarket() {
   const priced = state.market.filter((item) => item.price_brl !== null);
   const activeAlerts = state.alerts.filter((item) => item.condition_active);
+  const staleThreshold = ruleThreshold("stale_market_data", 45);
   const highestVolatility = priced.reduce((best, item) => {
     if (item.volatility_24h_pct === null) return best;
     return !best || item.volatility_24h_pct > best.volatility_24h_pct ? item : best;
   }, null);
-  const staleAssets = priced.filter((item) => item.staleness_minutes !== null && item.staleness_minutes >= 45);
+  const staleAssets = priced.filter((item) => item.staleness_minutes !== null && item.staleness_minutes >= staleThreshold);
 
   document.getElementById("market-kpis").innerHTML = [
     metricCard("radio", "Ativos com preço", `${priced.length}/${state.market.length}`, "Pares monitorados"),
     metricCard("bell", "Alertas ativos", activeAlerts.length, activeAlerts.length ? "Exigem leitura" : "Sem exceções abertas", activeAlerts.length ? "is-warning" : "is-positive"),
     metricCard("waves", "Maior volatilidade", highestVolatility ? formatPct(highestVolatility.volatility_24h_pct) : "--", highestVolatility ? displaySymbol(highestVolatility.symbol) : "Histórico insuficiente", highestVolatility ? "is-warning" : ""),
-    metricCard("clock-3", "Dados atrasados", staleAssets.length, staleAssets.length ? "Acima de 45 min" : "Coleta dentro do limite", staleAssets.length ? "is-negative" : "is-positive"),
+    metricCard("clock-3", "Dados atrasados", staleAssets.length, staleAssets.length ? `Acima de ${formatNumber(staleThreshold)} min` : "Coleta dentro do limite", staleAssets.length ? "is-negative" : "is-positive"),
   ].join("");
 
   document.getElementById("market-assets").innerHTML = state.market.map(assetCard).join("");
@@ -176,7 +205,7 @@ function renderAssetSummary() {
     metricCard("badge-dollar-sign", "Último preço", formatBRL(item.price_brl), displaySymbol(item.symbol)),
     metricCard("timer", "Retorno em 1h", formatPct(item.return_1h_pct), "Variação do preço", changeClass(item.return_1h_pct)),
     metricCard("calendar-clock", "Retorno em 24h", formatPct(item.return_24h_pct), "Variação do preço", changeClass(item.return_24h_pct)),
-    metricCard("waves", "Volatilidade em 24h", formatPct(item.volatility_24h_pct), "Oscilação realizada", item.volatility_24h_pct >= 4 ? "is-warning" : ""),
+    metricCard("waves", "Volatilidade em 24h", formatPct(item.volatility_24h_pct), "Oscilação realizada", item.volatility_24h_pct >= ruleThreshold("volatility_24h", 4) ? "is-warning" : ""),
   ].join("");
   document.getElementById("asset-definitions").innerHTML = [
     definition("Retorno", "Compara o preço atual com o preço observado no início da janela."),
@@ -184,7 +213,12 @@ function renderAssetSummary() {
     definition("Drawdown", `Preço atual em relação ao maior preço da janela: ${formatPct(item.drawdown_7d_pct)}.`),
     definition("Volume relativo", `Volume do candle atual dividido pela média anterior: ${formatRatio(item.volume_ratio)}.`),
     definition("Atualização", item.calculated_at ? formatDateTime(item.calculated_at) : "Ainda não calculada."),
-    definition("Escopo", "Indicadores de mercado; não estimam risco regulatório nem recomendam operação."),
+    definition(
+      "Risco atual",
+      item.risk_reasons?.length
+        ? item.risk_reasons.map((reason) => reason.label).join("; ")
+        : "Nenhuma regra ativa foi ultrapassada para este ativo.",
+    ),
   ].join("");
 }
 
@@ -238,10 +272,14 @@ function renderPortfolio() {
   document.getElementById("portfolio-kpis").innerHTML = [
     metricCard("landmark", "Valor atual", formatBRL(data.total_value_brl), `${data.positions.length || 0} posições`),
     metricCard("chart-no-axes-column-increasing", "Resultado", formatBRL(data.pnl_brl), formatPct(data.pnl_pct), changeClass(data.pnl_brl)),
-    metricCard("pie-chart", "Maior posição", formatPct(data.max_weight_pct), "Concentração", data.max_weight_pct >= 60 ? "is-warning" : ""),
-    metricCard("flame", "Ativos voláteis", formatPct(data.volatile_asset_share_pct), "Parcela sem USDT", data.volatile_asset_share_pct >= 90 ? "is-warning" : ""),
+    metricCard("calendar-clock", "Variação em 24h", formatPct(data.return_24h_pct), "Carteira estática atual", changeClass(data.return_24h_pct)),
+    metricCard("pie-chart", "Maior posição", formatPct(data.max_weight_pct), "Concentração", data.max_weight_pct >= ruleThreshold("portfolio_concentration", 60) ? "is-warning" : ""),
+    metricCard("flame", "Ativos voláteis", formatPct(data.volatile_asset_share_pct), "Parcela sem USDT", data.volatile_asset_share_pct >= ruleThreshold("volatile_asset_share", 90) ? "is-warning" : ""),
   ].join("");
-  document.getElementById("portfolio-note").textContent = data.risk_contribution_note || "";
+  const portfolioRisk = data.risk_reasons?.length
+    ? ` Condições ativas: ${data.risk_reasons.map((reason) => reason.label).join("; ")}.`
+    : " Nenhuma regra de portfólio está ativa.";
+  document.getElementById("portfolio-note").textContent = `${data.risk_contribution_note || ""}${portfolioRisk}`;
   document.getElementById("portfolio-table").innerHTML = data.positions.length
     ? data.positions.map(positionRow).join("")
     : "";
@@ -274,8 +312,11 @@ function renderAlerts() {
 }
 
 function renderRules() {
+  const profile = state.riskProfile.profile || state.rules[0]?.profile || "moderate";
+  document.getElementById("risk-profile-select").value = profile;
+  document.getElementById("reset-risk-profile").disabled = profile !== "custom";
   document.getElementById("rules-list").innerHTML = state.rules.map((rule) => `
-    <article class="rule-row" data-rule-id="${rule.id}">
+    <article class="rule-row" data-rule-id="${rule.id}" data-rule-code="${escapeHtml(rule.code)}">
       <div class="rule-name"><strong>${escapeHtml(rule.label)}</strong><small>${escapeHtml(rule.metric)} · ${escapeHtml(rule.scope)}</small></div>
       <span class="severity-pill" data-severity="${escapeHtml(rule.severity)}">${severityLabel(rule.severity)}</span>
       <div class="rule-threshold"><input type="number" step="any" value="${rule.threshold}" aria-label="Limite de ${escapeHtml(rule.label)}"><span>${escapeHtml(rule.unit)}</span></div>
@@ -292,11 +333,14 @@ function renderSystem() {
   document.getElementById("system-kpis").innerHTML = [
     metricCard("database", "Banco de dados", "Online", "PostgreSQL acessível", "is-positive"),
     metricCard("download", "Última ingestão", run ? statusLabel(run.status) : "Sem execução", run?.finished_at ? formatDateTime(run.finished_at) : "Aguardando coleta", run?.status === "failed" ? "is-negative" : ""),
-    metricCard("clock", "Maior defasagem", state.market.some((item) => item.calculated_at) ? formatMinutes(oldestStaleness) : "--", "Entre os quatro ativos", oldestStaleness >= 45 ? "is-warning" : ""),
+    metricCard("clock", "Maior defasagem", state.market.some((item) => item.calculated_at) ? formatMinutes(oldestStaleness) : "--", "Entre os quatro ativos", oldestStaleness >= ruleThreshold("stale_market_data", 45) ? "is-warning" : ""),
   ].join("");
   document.getElementById("system-detail").innerHTML = run ? `
     <div class="surface-heading"><div><span class="surface-kicker">Execução</span><h3>Última coleta registrada</h3></div><span class="status-pill" data-status="${run.status === "success" ? "resolved" : "new"}">${statusLabel(run.status)}</span></div>
     <dl><dt>Início</dt><dd>${formatDateTime(run.started_at)}</dd><dt>Duração</dt><dd>${run.duration_ms ?? "--"} ms</dd><dt>Candles recebidos</dt><dd>${run.candles_received}</dd><dt>Candles processados</dt><dd>${run.candles_upserted}</dd><dt>Erro</dt><dd>${escapeHtml(run.error_message || "Nenhum")}</dd></dl>` : '<div class="empty-state"><i data-lucide="hourglass"></i><p>Nenhuma coleta registrada.</p></div>';
+  document.getElementById("system-runs-table").innerHTML = state.runs.length
+    ? state.runs.map(runRow).join("")
+    : '<tr><td colspan="6">Nenhuma execução registrada.</td></tr>';
 }
 
 async function handleLogin(event) {
@@ -341,6 +385,15 @@ function requireLogin() {
   return false;
 }
 
+function recoverOperatorSession(error) {
+  if (error.status !== 401) return false;
+  state.authenticated = false;
+  renderOperatorState();
+  openDialog("login-dialog");
+  toast("Sua sessão expirou. Entre novamente.", true);
+  return true;
+}
+
 function openPositionDialog(position = null) {
   document.getElementById("position-symbol").value = position?.symbol || state.selectedSymbol;
   document.getElementById("position-quantity").value = position?.quantity || "";
@@ -364,9 +417,9 @@ async function handlePositionSave(event) {
     state.portfolio = await api("/api/portfolio");
     closeDialog("position-dialog");
     renderPortfolio();
-    toast("Posição salva.");
+    toast("Posição salva; alertas serão reavaliados na próxima coleta.");
   } catch (error) {
-    if (error.status === 401) return requireLogin();
+    if (recoverOperatorSession(error)) return;
     const message = document.getElementById("position-error");
     message.textContent = error.message;
     message.classList.remove("is-hidden");
@@ -383,14 +436,28 @@ async function handlePortfolioAction(event) {
       await api(`/api/portfolio/positions/${encodeURIComponent(button.dataset.symbol)}`, { method: "DELETE" });
       state.portfolio = await api("/api/portfolio");
       renderPortfolio();
-      toast("Posição removida.");
+      toast("Posição removida; alertas serão reavaliados na próxima coleta.");
     } catch (error) {
+      if (recoverOperatorSession(error)) return;
       toast(error.message, true);
     }
   }
 }
 
 async function handleAlertAction(event) {
+  const historyButton = event.target.closest("button[data-alert-history]");
+  if (historyButton) {
+    try {
+      const events = await api(`/api/alerts/${historyButton.dataset.alertHistory}/events`);
+      document.getElementById("alert-events-list").innerHTML = events.length
+        ? events.map(alertEventItem).join("")
+        : '<div class="empty-state"><p>Nenhum evento registrado.</p></div>';
+      openDialog("alert-events-dialog");
+    } catch (error) {
+      toast(error.message, true);
+    }
+    return;
+  }
   const button = event.target.closest("button[data-alert-status]");
   if (!button || !requireLogin()) return;
   try {
@@ -400,6 +467,7 @@ async function handleAlertAction(event) {
     renderMarket();
     toast("Estado do alerta atualizado.");
   } catch (error) {
+    if (recoverOperatorSession(error)) return;
     toast(error.message, true);
   }
 }
@@ -410,12 +478,48 @@ async function handleRuleAction(event) {
   const row = button.closest("[data-rule-id]");
   const payload = { threshold: Number(row.querySelector('input[type="number"]').value), enabled: row.querySelector('input[type="checkbox"]').checked };
   try {
-    await api(`/api/rules/${row.dataset.ruleId}`, { method: "PATCH", body: JSON.stringify(payload) });
-    state.rules = await api("/api/rules");
+    await api(`/api/settings/rules/${row.dataset.ruleCode}`, { method: "PUT", body: JSON.stringify(payload) });
+    [state.rules, state.riskProfile] = await Promise.all([api("/api/rules"), api("/api/settings/risk-profile")]);
     renderRules();
     refreshIcons();
-    toast("Regra atualizada.");
+    toast("Regra atualizada; será aplicada na próxima coleta.");
   } catch (error) {
+    if (recoverOperatorSession(error)) return;
+    toast(error.message, true);
+  }
+}
+
+async function handleProfileChange(event) {
+  if (!requireLogin()) {
+    event.target.value = state.riskProfile.profile;
+    return;
+  }
+  try {
+    state.riskProfile = await api("/api/settings/risk-profile", {
+      method: "PUT",
+      body: JSON.stringify({ profile: event.target.value }),
+    });
+    state.rules = await api("/api/rules");
+    renderAll();
+    toast(
+      `Perfil ${profileLabel(state.riskProfile.profile)} ativado; regras serão aplicadas na próxima coleta.`,
+    );
+  } catch (error) {
+    event.target.value = state.riskProfile.profile;
+    if (recoverOperatorSession(error)) return;
+    toast(error.message, true);
+  }
+}
+
+async function handleProfileReset() {
+  if (!requireLogin()) return;
+  try {
+    state.riskProfile = await api("/api/settings/risk-profile/reset", { method: "POST" });
+    state.rules = await api("/api/rules");
+    renderAll();
+    toast("Limites personalizados restaurados; serão aplicados na próxima coleta.");
+  } catch (error) {
+    if (recoverOperatorSession(error)) return;
     toast(error.message, true);
   }
 }
@@ -443,7 +547,19 @@ function positionRow(item) {
 
 function alertRow(item) {
   const actions = item.status === "new" ? `<button class="icon-button icon-button--small" type="button" data-alert-id="${item.id}" data-alert-status="acknowledged" title="Reconhecer" aria-label="Reconhecer alerta"><i data-lucide="eye"></i></button><button class="icon-button icon-button--small" type="button" data-alert-id="${item.id}" data-alert-status="dismissed" title="Dispensar" aria-label="Dispensar alerta"><i data-lucide="bell-off"></i></button>` : item.status === "acknowledged" ? `<button class="icon-button icon-button--small" type="button" data-alert-id="${item.id}" data-alert-status="resolved" title="Resolver" aria-label="Resolver alerta"><i data-lucide="check"></i></button>` : "";
-  return `<tr><td><span class="severity-pill" data-severity="${escapeHtml(item.severity)}">${severityLabel(item.severity)}</span></td><td><strong>${escapeHtml(item.label)}</strong></td><td>${escapeHtml(item.symbol ? displaySymbol(item.symbol) : "Portfólio")}</td><td class="table-number">${formatNumber(item.observed, 2)}</td><td><span class="status-pill" data-status="${escapeHtml(item.status)}">${statusLabel(item.status)}</span></td><td>${formatDateTime(item.last_triggered_at)}</td><td><div class="table-actions">${actions}</div></td></tr>`;
+  return `<tr><td><span class="severity-pill" data-severity="${escapeHtml(item.severity)}">${severityLabel(item.severity)}</span></td><td><strong>${escapeHtml(item.label)}</strong></td><td>${escapeHtml(item.symbol ? displaySymbol(item.symbol) : "Portfólio")}</td><td class="table-number">${formatNumber(item.observed, 2)}</td><td><span class="status-pill" data-status="${escapeHtml(item.status)}">${statusLabel(item.status)}</span></td><td>${formatDateTime(item.last_triggered_at)}</td><td><div class="table-actions"><button class="icon-button icon-button--small" type="button" data-alert-history="${item.id}" title="Ver histórico" aria-label="Ver histórico do alerta"><i data-lucide="history"></i></button>${actions}</div></td></tr>`;
+}
+
+function alertEventItem(item) {
+  return `<article class="event-item"><strong>${escapeHtml(alertActionLabel(item.action))}</strong><small>${formatDateTime(item.created_at)} · ${escapeHtml(item.actor)}</small></article>`;
+}
+
+function runRow(item) {
+  return `<tr><td>${escapeHtml(item.source)}</td><td><span class="status-pill" data-status="${item.status === "success" ? "resolved" : "new"}">${statusLabel(item.status)}</span></td><td>${formatDateTime(item.started_at)}</td><td class="table-number">${item.duration_ms ?? "--"} ms</td><td class="table-number">${item.candles_received}</td><td class="table-number">${item.candles_upserted}</td></tr>`;
+}
+
+function alertActionLabel(value) {
+  return { triggered: "Condição detectada", aggravated: "Condição agravada", repeated: "Condição ainda ativa", acknowledged: "Reconhecido", resolved: "Normalizado", dismissed: "Dispensado", reopened: "Reaberto", condition_cleared: "Condição encerrada", disabled: "Regra desativada", profile_changed: "Perfil alterado" }[value] || value;
 }
 
 function chartOptions(withVolume) {
@@ -594,6 +710,15 @@ function severityLabel(value) {
 
 function statusLabel(value) {
   return { new: "Novo", acknowledged: "Reconhecido", resolved: "Resolvido", dismissed: "Dispensado", success: "Sucesso", failed: "Falhou", running: "Executando" }[value] || value;
+}
+
+function profileLabel(value) {
+  return { conservative: "Conservador", moderate: "Moderado", aggressive: "Agressivo", custom: "Personalizado" }[value] || "Sem perfil";
+}
+
+function ruleThreshold(code, fallback) {
+  const threshold = Number(state.rules.find((rule) => rule.code === code)?.threshold);
+  return Number.isFinite(threshold) ? threshold : fallback;
 }
 
 function escapeHtml(value) {

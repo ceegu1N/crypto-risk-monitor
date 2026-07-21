@@ -47,6 +47,22 @@ def test_invalid_kline_payload_is_rejected():
         parse_kline("BTCBRL", [1, "100"])
 
 
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda payload: payload.__setitem__(2, "99.00"),
+        lambda payload: payload.__setitem__(3, "104.00"),
+        lambda payload: payload.__setitem__(6, payload[0]),
+    ],
+)
+def test_parse_kline_rejects_invalid_price_envelopes_and_time_windows(mutate):
+    payload = sample_kline()
+    mutate(payload)
+
+    with pytest.raises(BinanceClientError, match="invalid kline"):
+        parse_kline("BTCBRL", payload)
+
+
 def test_timeout_is_retried_before_a_clear_error():
     attempts = 0
     waits: list[float] = []

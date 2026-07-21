@@ -53,14 +53,16 @@ def test_ingesting_the_same_batch_twice_is_idempotent(ingestion_context):
 
     with factory() as session:
         assert session.scalar(select(func.count()).select_from(Candle)) == 100
-        assert session.scalar(select(func.count()).select_from(RiskSnapshot)) == 2
+        assert session.scalar(select(func.count()).select_from(RiskSnapshot)) == 1
         runs = session.scalars(select(IngestionRun).order_by(IngestionRun.id)).all()
         latest_snapshot = session.scalars(
             select(RiskSnapshot).order_by(RiskSnapshot.id.desc()).limit(1)
         ).one()
     assert first.candles_processed == 100
     assert second.candles_processed == 100
+    assert first.risk_snapshot_id == second.risk_snapshot_id
     assert [run.status for run in runs] == ["success", "success"]
+    assert [run.source for run in runs] == ["binance:BTCBRL", "binance:BTCBRL"]
     assert latest_snapshot.return_1h_pct is not None
     assert latest_snapshot.return_24h_pct is not None
     assert engine is not None

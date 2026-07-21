@@ -45,7 +45,9 @@ def parse_kline(symbol: str, payload: list[Any]) -> CandleData:
         trade_count = int(payload[8])
         if min(open_price, high_price, low_price, close_price) <= 0:
             raise ValueError("prices must be positive")
-        if volume < 0 or trade_count < 0 or closed_at_ms < opened_at_ms:
+        if high_price < max(open_price, close_price) or low_price > min(open_price, close_price):
+            raise ValueError("high and low must contain open and close")
+        if volume < 0 or trade_count < 0 or closed_at_ms <= opened_at_ms:
             raise ValueError("invalid volume, trades, or timestamps")
     except (IndexError, TypeError, ValueError, InvalidOperation) as exc:
         raise BinanceClientError(f"invalid kline payload for {symbol}") from exc

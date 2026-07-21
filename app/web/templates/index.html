@@ -5,9 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Monitor de risco de mercado e portfólio em criptoativos cotados em reais.">
   <title>Crypto Risk Monitor</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/app.css">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" defer></script>
-  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
+  <script src="/static/vendor/chart.umd.min.js" defer></script>
+  <script src="/static/vendor/lucide.min.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
@@ -130,7 +131,7 @@
           <div><h2>Portfólio simulado</h2><p>Exposição e concentração com preços de mercado</p></div>
           <button class="command-button" id="add-position-button" type="button"><i data-lucide="plus"></i> Posição</button>
         </div>
-        <div class="metric-grid metric-grid--four" id="portfolio-kpis"></div>
+        <div class="metric-grid metric-grid--five" id="portfolio-kpis"></div>
         <div class="content-grid content-grid--balanced">
           <section class="surface chart-surface">
             <div class="surface-heading"><div><span class="surface-kicker">Composição</span><h3>Participação por ativo</h3></div></div>
@@ -159,7 +160,17 @@
       <section class="view-panel" id="view-rules" data-view-panel="rules">
         <div class="section-heading">
           <div><h2>Regras de risco</h2><p>Perfil ativo e limites observáveis</p></div>
-          <span class="profile-badge" id="risk-profile">Moderado</span>
+          <div class="rule-profile-controls">
+            <label class="select-control"><span>Perfil</span>
+              <select id="risk-profile-select" aria-label="Perfil de risco ativo">
+                <option value="conservative">Conservador</option>
+                <option value="moderate">Moderado</option>
+                <option value="aggressive">Agressivo</option>
+                <option value="custom">Personalizado</option>
+              </select>
+            </label>
+            <button type="button" class="icon-button" id="reset-risk-profile" title="Restaurar limites do perfil personalizado" aria-label="Restaurar limites do perfil personalizado"><i data-lucide="rotate-ccw"></i></button>
+          </div>
         </div>
         <div class="rule-list" id="rules-list"></div>
       </section>
@@ -180,6 +191,10 @@
           </div>
         </section>
         <section class="surface system-detail" id="system-detail"></section>
+        <section class="surface table-surface system-runs">
+          <div class="surface-heading"><div><span class="surface-kicker">Auditoria</span><h3>Execuções recentes</h3></div></div>
+          <div class="table-wrap"><table><thead><tr><th>Origem</th><th>Status</th><th>Início</th><th>Duração</th><th>Recebidos</th><th>Gravados</th></tr></thead><tbody id="system-runs-table"></tbody></table></div>
+        </section>
         <p class="disclaimer">Monitor informativo. Não executa ordens, não acessa carteiras e não constitui recomendação financeira.</p>
       </section>
     </main>
@@ -198,10 +213,17 @@
     <form method="dialog" id="position-form">
       <div class="modal-heading"><div><span class="surface-kicker">Simulação</span><h2>Posição do portfólio</h2></div><button class="icon-button" value="cancel" type="submit" aria-label="Fechar"><i data-lucide="x"></i></button></div>
       <label class="field"><span>Ativo</span><select id="position-symbol" required></select></label>
-      <label class="field"><span>Quantidade</span><input id="position-quantity" type="number" min="0" step="any" required></label>
-      <label class="field"><span>Preço médio em BRL</span><input id="position-cost" type="number" min="0" step="any" placeholder="Opcional"></label>
+      <label class="field"><span>Quantidade</span><input id="position-quantity" type="number" min="0.000000000001" step="any" required></label>
+      <label class="field"><span>Preço médio em BRL</span><input id="position-cost" type="number" min="0.000000000001" step="any" placeholder="Opcional"></label>
       <p class="form-error is-hidden" id="position-error"></p>
       <button class="command-button command-button--full" type="submit" value="save"><i data-lucide="save"></i> Salvar posição</button>
+    </form>
+  </dialog>
+
+  <dialog class="modal" id="alert-events-dialog">
+    <form method="dialog">
+      <div class="modal-heading"><div><span class="surface-kicker">Auditoria</span><h2>Histórico do alerta</h2></div><button class="icon-button" value="cancel" type="submit" aria-label="Fechar"><i data-lucide="x"></i></button></div>
+      <div class="event-timeline" id="alert-events-list"></div>
     </form>
   </dialog>
 

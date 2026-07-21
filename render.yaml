@@ -10,12 +10,15 @@ services:
     autoDeployTrigger: checksPass
     healthCheckPath: /api/health
     dockerCommand: >-
-      sh -c "alembic upgrade head && exec uvicorn app.main:create_app --factory
+      sh -c "DATABASE_URL=$MIGRATION_DATABASE_URL alembic upgrade head &&
+      exec uvicorn app.main:create_app --factory
       --host 0.0.0.0 --port 8000"
     envVars:
       - key: PORT
         value: "8000"
       - key: DATABASE_URL
+        sync: false
+      - key: MIGRATION_DATABASE_URL
         sync: false
       - key: OPERATOR_PASSWORD
         sync: false

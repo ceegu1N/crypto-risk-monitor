@@ -30,12 +30,13 @@ class PortfolioMetrics:
     cost_basis_value_brl: float | None
     pnl_brl: float | None
     pnl_pct: float | None
+    return_24h_pct: float | None
     max_weight_pct: float
     volatile_asset_share_pct: float
     positions: tuple[PositionMetrics, ...]
     risk_contribution_note: str = (
-        "Indicador aproximado calculado como peso vezes volatilidade; nao representa VaR "
-        "nem previsao de perda."
+        "Indicador aproximado calculado como peso vezes volatilidade; não representa VaR "
+        "nem previsão de perda."
     )
 
 
@@ -44,11 +45,21 @@ def calculate_portfolio(
     prices: Mapping[str, float],
     volatilities: Mapping[str, float | None],
     *,
+    returns_24h_pct: Mapping[str, float | None] | None = None,
     stable_symbols: frozenset[str] = frozenset({"USDTBRL"}),
 ) -> PortfolioMetrics:
     """Value a simulated portfolio using current market prices."""
     if not positions:
-        return PortfolioMetrics(0.0, None, None, None, 0.0, 0.0, ())
+        return PortfolioMetrics(
+            total_value_brl=0.0,
+            cost_basis_value_brl=None,
+            pnl_brl=None,
+            pnl_pct=None,
+            return_24h_pct=None,
+            max_weight_pct=0.0,
+            volatile_asset_share_pct=0.0,
+            positions=(),
+        )
 
     normalized: list[tuple[Position, str, float, float]] = []
     seen: set[str] = set()
@@ -107,16 +118,44 @@ def calculate_portfolio(
     )
     pnl_brl = total_value - cost_value if cost_value is not None else None
     pnl_pct = (total_value / cost_value - 1.0) * 100.0 if cost_value is not None else None
+    portfolio_return_24h = _portfolio_return_24h(
+        metrics,
+        returns_24h_pct,
+        total_value=total_value,
+    )
 
     return PortfolioMetrics(
         total_value_brl=total_value,
         cost_basis_value_brl=cost_value,
         pnl_brl=pnl_brl,
         pnl_pct=pnl_pct,
+        return_24h_pct=portfolio_return_24h,
         max_weight_pct=max(item.weight_pct for item in metrics),
         volatile_asset_share_pct=volatile_value / total_value * 100.0,
         positions=tuple(metrics),
     )
+
+
+def _portfolio_return_24h(
+    positions: Sequence[PositionMetrics],
+    returns: Mapping[str, float | None] | None,
+    *,
+    total_value: float,
+) -> float | None:
+    if returns is None:
+        return None
+    previous_total = 0.0
+    for position in positions:
+        raw_return = returns.get(position.symbol)
+        if raw_return is None:
+            return None
+        return_pct = float(raw_return)
+        if not isfinite(return_pct) or return_pct <= -100.0:
+            return None
+        previous_total += position.current_value_brl / (1.0 + return_pct / 100.0)
+    if previous_total <= 0:
+        return None
+    return (total_value / previous_total - 1.0) * 100.0
 
 
 def _positive_number(value: float, label: str) -> float:

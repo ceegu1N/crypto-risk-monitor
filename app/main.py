@@ -21,6 +21,7 @@ def create_app(
     session_factory: sessionmaker[Session] | None = None,
 ) -> FastAPI:
     current_settings = settings or Settings()  # type: ignore[call-arg]
+    current_settings.validate_web_security()
     current_factory = session_factory or sessionmaker(
         bind=create_database_engine(current_settings.database_url),
         expire_on_commit=False,
@@ -29,7 +30,7 @@ def create_app(
         title="Crypto Market & Portfolio Risk Monitor",
         version="0.1.0",
         description=(
-            "Monitor explicavel de mercado; nao executa ordens nem recomenda investimentos."
+            "Monitor explicável de mercado; não executa ordens nem recomenda investimentos."
         ),
     )
     app.state.settings = current_settings
@@ -37,11 +38,34 @@ def create_app(
     app.add_middleware(
         SessionMiddleware,
         secret_key=current_settings.session_secret,
-        session_cookie="crypto_risk_session",
+        session_cookie=(
+            "__Host-crypto_risk_session"
+            if current_settings.session_cookie_secure
+            else "crypto_risk_session"
+        ),
         max_age=8 * 60 * 60,
-        same_site="lax",
+        same_site="strict",
         https_only=current_settings.session_cookie_secure,
     )
+
+    @app.middleware("http")
+    async def add_security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self'; "
+            "style-src 'self'; img-src 'self' data:; connect-src 'self'; "
+            "font-src 'none'; object-src 'none'; base-uri 'self'; "
+            "frame-ancestors 'none'; form-action 'self'"
+        )
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Permissions-Policy"] = "camera=(), geolocation=(), microphone=()"
+        if current_settings.session_cookie_secure:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
     templates = Jinja2Templates(directory=WEB_ROOT / "templates")
     app.mount("/static", StaticFiles(directory=WEB_ROOT / "static"), name="static")
 
