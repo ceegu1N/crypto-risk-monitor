@@ -1,0 +1,29 @@
+previews:
+  generation: off
+
+services:
+  - type: web
+    name: crypto-risk-monitor
+    runtime: docker
+    plan: free
+    region: virginia
+    autoDeployTrigger: checksPass
+    healthCheckPath: /api/health
+    dockerCommand: >-
+      sh -c "alembic upgrade head && exec uvicorn app.main:create_app --factory
+      --host 0.0.0.0 --port 8000"
+    envVars:
+      - key: PORT
+        value: "8000"
+      - key: DATABASE_URL
+        sync: false
+      - key: OPERATOR_PASSWORD
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: RISK_PROFILE
+        value: moderate
+      - key: SYMBOLS
+        value: BTCBRL,ETHBRL,SOLBRL,USDTBRL

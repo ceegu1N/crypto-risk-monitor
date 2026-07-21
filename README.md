@@ -121,3 +121,10 @@ Os candles são consultados no endpoint público oficial
 `https://data-api.binance.vision`. Somente candles já encerrados são persistidos;
 uma janela ainda em formação não entra nas métricas. O histórico inicial padrão
 é de sete dias e as atualizações posteriores são incrementais.
+
+## Publicação
+
+O repositório inclui `render.yaml` para a interface, um workflow agendado para a
+coleta e instruções para PostgreSQL gerenciado no Neon. Nenhuma conta ou recurso
+é criado automaticamente. O procedimento completo, incluindo segredos e
+limitações dos planos gratuitos, está em [docs/DEPLOY.md](docs/DEPLOY.md).
