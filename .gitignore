@@ -1,6 +1,8 @@
 .worktrees/
 .venv/
 .docker-local/
+.chrome-headless*/
+.screenshots/
 __pycache__/
 *.py[cod]
 .pytest_cache/

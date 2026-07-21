@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Monitor de risco de mercado e portfólio em criptoativos cotados em reais.">
+  <title>Crypto Risk Monitor</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" defer></script>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Navegação principal">
+      <div class="brand">
+        <span class="brand-mark"><i data-lucide="shield-check"></i></span>
+        <span>
+          <strong>Crypto Risk</strong>
+          <small>Market monitor</small>
+        </span>
+      </div>
+
+      <nav class="primary-nav">
+        <button class="nav-item is-active" type="button" data-view="market">
+          <i data-lucide="layout-dashboard"></i><span>Mercado</span>
+        </button>
+        <button class="nav-item" type="button" data-view="asset">
+          <i data-lucide="candlestick-chart"></i><span>Ativo</span>
+        </button>
+        <button class="nav-item" type="button" data-view="portfolio">
+          <i data-lucide="wallet-cards"></i><span>Portfólio</span>
+        </button>
+        <button class="nav-item" type="button" data-view="alerts">
+          <i data-lucide="bell-ring"></i><span>Alertas</span>
+        </button>
+        <button class="nav-item" type="button" data-view="rules">
+          <i data-lucide="sliders-horizontal"></i><span>Regras</span>
+        </button>
+        <button class="nav-item" type="button" data-view="system">
+          <i data-lucide="activity"></i><span>Sistema</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-status">
+        <span class="status-dot" id="sidebar-status-dot"></span>
+        <span><strong id="sidebar-status-label">Verificando</strong><small id="sidebar-status-time">--</small></span>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow" id="view-eyebrow">Visão geral</p>
+          <h1 id="view-title">Mercado</h1>
+        </div>
+        <div class="topbar-actions">
+          <span class="operator-state" id="operator-state"><i data-lucide="lock-keyhole"></i> Leitura</span>
+          <button class="icon-button" id="login-button" type="button" title="Acesso do operador" aria-label="Acesso do operador">
+            <i data-lucide="key-round"></i>
+          </button>
+          <button class="icon-button" id="refresh-button" type="button" title="Atualizar dados" aria-label="Atualizar dados">
+            <i data-lucide="refresh-cw"></i>
+          </button>
+        </div>
+      </header>
+
+      <div class="system-banner is-hidden" id="system-banner" role="status"></div>
+
+      <section class="view-panel is-active" id="view-market" data-view-panel="market">
+        <div class="section-heading">
+          <div>
+            <h2>Painel de mercado</h2>
+            <p>BTC, ETH, SOL e USDT cotados em reais</p>
+          </div>
+          <span class="timestamp" id="market-updated">Sem coleta</span>
+        </div>
+
+        <div class="metric-grid metric-grid--four" id="market-kpis">
+          <article class="metric-card skeleton-card"></article>
+          <article class="metric-card skeleton-card"></article>
+          <article class="metric-card skeleton-card"></article>
+          <article class="metric-card skeleton-card"></article>
+        </div>
+
+        <div class="asset-grid" id="market-assets" aria-live="polite"></div>
+
+        <div class="content-grid content-grid--wide">
+          <section class="surface chart-surface">
+            <div class="surface-heading">
+              <div><span class="surface-kicker">Preço</span><h3 id="market-chart-title">BTC/BRL · 24 horas</h3></div>
+              <button class="icon-button icon-button--small" type="button" data-open-asset title="Abrir detalhes" aria-label="Abrir detalhes do ativo">
+                <i data-lucide="arrow-up-right"></i>
+              </button>
+            </div>
+            <div class="chart-frame"><canvas id="market-chart" aria-label="Histórico de preço"></canvas></div>
+            <div class="empty-state is-hidden" id="market-chart-empty"><i data-lucide="database-zap"></i><p>Histórico ainda não coletado.</p></div>
+          </section>
+
+          <section class="surface">
+            <div class="surface-heading"><div><span class="surface-kicker">Exceções</span><h3>Alertas ativos</h3></div><span class="count-badge" id="active-alert-count">0</span></div>
+            <div class="compact-list" id="market-alerts"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view-panel" id="view-asset" data-view-panel="asset">
+        <div class="section-heading section-heading--controls">
+          <div><h2>Análise do ativo</h2><p>Preço, retorno, volatilidade e volume</p></div>
+          <div class="control-row">
+            <label class="select-control"><span>Ativo</span><select id="asset-selector"></select></label>
+            <div class="segmented" aria-label="Período do gráfico">
+              <button type="button" class="is-active" data-period="24h">24h</button>
+              <button type="button" data-period="7d">7d</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="metric-grid metric-grid--four" id="asset-kpis"></div>
+        <section class="surface chart-surface chart-surface--large">
+          <div class="surface-heading"><div><span class="surface-kicker">Série temporal</span><h3 id="asset-chart-title">Preço e volume</h3></div></div>
+          <div class="chart-frame chart-frame--large"><canvas id="asset-chart" aria-label="Preço e volume do ativo"></canvas></div>
+          <div class="empty-state is-hidden" id="asset-chart-empty"><i data-lucide="chart-no-axes-combined"></i><p>Sem candles para o período.</p></div>
+        </section>
+        <div class="definition-grid" id="asset-definitions"></div>
+      </section>
+
+      <section class="view-panel" id="view-portfolio" data-view-panel="portfolio">
+        <div class="section-heading">
+          <div><h2>Portfólio simulado</h2><p>Exposição e concentração com preços de mercado</p></div>
+          <button class="command-button" id="add-position-button" type="button"><i data-lucide="plus"></i> Posição</button>
+        </div>
+        <div class="metric-grid metric-grid--four" id="portfolio-kpis"></div>
+        <div class="content-grid content-grid--balanced">
+          <section class="surface chart-surface">
+            <div class="surface-heading"><div><span class="surface-kicker">Composição</span><h3>Participação por ativo</h3></div></div>
+            <div class="chart-frame"><canvas id="portfolio-chart" aria-label="Composição do portfólio"></canvas></div>
+            <div class="empty-state is-hidden" id="portfolio-empty"><i data-lucide="wallet-minimal"></i><p>Nenhuma posição simulada.</p></div>
+          </section>
+          <section class="surface table-surface">
+            <div class="surface-heading"><div><span class="surface-kicker">Posições</span><h3>Detalhamento</h3></div></div>
+            <div class="table-wrap"><table><thead><tr><th>Ativo</th><th>Valor</th><th>Peso</th><th>P/L</th><th></th></tr></thead><tbody id="portfolio-table"></tbody></table></div>
+          </section>
+        </div>
+        <p class="method-note" id="portfolio-note"></p>
+      </section>
+
+      <section class="view-panel" id="view-alerts" data-view-panel="alerts">
+        <div class="section-heading section-heading--controls">
+          <div><h2>Central de alertas</h2><p>Condições detectadas e histórico operacional</p></div>
+          <label class="select-control"><span>Status</span><select id="alert-filter"><option value="active">Ativos</option><option value="all">Todos</option><option value="new">Novos</option><option value="acknowledged">Reconhecidos</option><option value="resolved">Resolvidos</option><option value="dismissed">Dispensados</option></select></label>
+        </div>
+        <section class="surface table-surface">
+          <div class="table-wrap"><table><thead><tr><th>Severidade</th><th>Condição</th><th>Ativo</th><th>Observado</th><th>Status</th><th>Atualização</th><th>Ações</th></tr></thead><tbody id="alerts-table"></tbody></table></div>
+          <div class="empty-state is-hidden" id="alerts-empty"><i data-lucide="badge-check"></i><p>Nenhum alerta neste filtro.</p></div>
+        </section>
+      </section>
+
+      <section class="view-panel" id="view-rules" data-view-panel="rules">
+        <div class="section-heading">
+          <div><h2>Regras de risco</h2><p>Perfil ativo e limites observáveis</p></div>
+          <span class="profile-badge" id="risk-profile">Moderado</span>
+        </div>
+        <div class="rule-list" id="rules-list"></div>
+      </section>
+
+      <section class="view-panel" id="view-system" data-view-panel="system">
+        <div class="section-heading"><div><h2>Saúde do sistema</h2><p>Coleta, persistência e disponibilidade</p></div></div>
+        <div class="metric-grid metric-grid--three" id="system-kpis"></div>
+        <section class="surface">
+          <div class="surface-heading"><div><span class="surface-kicker">Fluxo</span><h3>Pipeline de dados</h3></div></div>
+          <div class="pipeline">
+            <div class="pipeline-step"><i data-lucide="radio-tower"></i><span><strong>Binance</strong><small>Candles públicos</small></span></div>
+            <i data-lucide="arrow-right" class="pipeline-arrow"></i>
+            <div class="pipeline-step"><i data-lucide="database"></i><span><strong>PostgreSQL</strong><small>Histórico e estados</small></span></div>
+            <i data-lucide="arrow-right" class="pipeline-arrow"></i>
+            <div class="pipeline-step"><i data-lucide="shield-alert"></i><span><strong>Risco</strong><small>Métricas e regras</small></span></div>
+            <i data-lucide="arrow-right" class="pipeline-arrow"></i>
+            <div class="pipeline-step"><i data-lucide="panels-top-left"></i><span><strong>API</strong><small>Painel e operador</small></span></div>
+          </div>
+        </section>
+        <section class="surface system-detail" id="system-detail"></section>
+        <p class="disclaimer">Monitor informativo. Não executa ordens, não acessa carteiras e não constitui recomendação financeira.</p>
+      </section>
+    </main>
+  </div>
+
+  <dialog class="modal" id="login-dialog">
+    <form method="dialog" id="login-form">
+      <div class="modal-heading"><div><span class="surface-kicker">Operador</span><h2>Acesso protegido</h2></div><button class="icon-button" value="cancel" type="submit" aria-label="Fechar"><i data-lucide="x"></i></button></div>
+      <label class="field"><span>Senha</span><input id="operator-password" type="password" autocomplete="current-password" required maxlength="256"></label>
+      <p class="form-error is-hidden" id="login-error">Credencial inválida.</p>
+      <button class="command-button command-button--full" type="submit" value="login"><i data-lucide="log-in"></i> Entrar</button>
+    </form>
+  </dialog>
+
+  <dialog class="modal" id="position-dialog">
+    <form method="dialog" id="position-form">
+      <div class="modal-heading"><div><span class="surface-kicker">Simulação</span><h2>Posição do portfólio</h2></div><button class="icon-button" value="cancel" type="submit" aria-label="Fechar"><i data-lucide="x"></i></button></div>
+      <label class="field"><span>Ativo</span><select id="position-symbol" required></select></label>
+      <label class="field"><span>Quantidade</span><input id="position-quantity" type="number" min="0" step="any" required></label>
+      <label class="field"><span>Preço médio em BRL</span><input id="position-cost" type="number" min="0" step="any" placeholder="Opcional"></label>
+      <p class="form-error is-hidden" id="position-error"></p>
+      <button class="command-button command-button--full" type="submit" value="save"><i data-lucide="save"></i> Salvar posição</button>
+    </form>
+  </dialog>
+
+  <div class="toast-region" id="toast-region" aria-live="polite"></div>
+</body>
+</html>
