@@ -33,9 +33,7 @@ class Settings(BaseSettings):
     @property
     def symbols(self) -> tuple[str, ...]:
         values = tuple(
-            symbol.strip().upper()
-            for symbol in self.symbols_csv.split(",")
-            if symbol.strip()
+            symbol.strip().upper() for symbol in self.symbols_csv.split(",") if symbol.strip()
         )
         if not values:
             raise ValueError("SYMBOLS must contain at least one market symbol")

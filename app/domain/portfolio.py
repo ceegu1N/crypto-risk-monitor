@@ -74,9 +74,7 @@ def calculate_portfolio(
         if symbol not in stable_symbols:
             volatile_value += current_value
 
-        cost_basis = (
-            float(position.cost_basis_brl) if position.cost_basis_brl is not None else None
-        )
+        cost_basis = float(position.cost_basis_brl) if position.cost_basis_brl is not None else None
         pnl_brl = quantity * (price - cost_basis) if cost_basis is not None else None
         pnl_pct = (price / cost_basis - 1.0) * 100.0 if cost_basis is not None else None
 

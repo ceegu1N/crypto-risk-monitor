@@ -68,8 +68,7 @@ def _daily_volatility(values: Sequence[float]) -> float | None:
         return None
     window = values[-(CANDLES_PER_DAY + 1) :]
     log_returns = [
-        log(current / previous)
-        for previous, current in zip(window, window[1:], strict=False)
+        log(current / previous) for previous, current in zip(window, window[1:], strict=False)
     ]
     return pstdev(log_returns) * sqrt(CANDLES_PER_DAY) * 100.0
 
