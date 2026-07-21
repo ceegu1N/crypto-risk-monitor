@@ -1,0 +1,9 @@
+.git/
+.worktrees/
+.pytest-tmp/
+.pytest-tmp-*/
+.runtime/
+.venv/
+.env*
+__pycache__/
+*.pyc
